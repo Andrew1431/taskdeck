@@ -1,0 +1,163 @@
+version: 1
+name: OneHost
+description: |
+  Self-hosted game servers on GCP. The `onehost` CLI starts/stops servers directly; the
+  optional control plane (Cloud Run worker + Discord bot) does the same off-box.
+  Laptop config lives in .env; cloud config lives in infra/terraform.tfvars.
+
+configs:
+  env:
+    file: .env
+    example: .env.example
+    format: dotenv
+    description: CLI settings (GCP project + default zone, DNS provider). `pnpm cli config` writes it.
+    secrets: [DUCKDNS_TOKEN, CLOUDFLARE_API_TOKEN, DISCORD_BOT_TOKEN]
+  tfvars:
+    file: infra/terraform.tfvars
+    example: infra/terraform.tfvars.example
+    format: hcl
+    description: Cloud Run / bot / DNS settings. Change it, then run the `apply-infra` workflow.
+    secrets: [duckdns_token, cloudflare_api_token, discord_public_key]
+
+actions:
+  # ---- Servers (the onehost CLI) ----
+  list:
+    title: List servers
+    group: Servers
+    run: pnpm run cli list
+  status:
+    title: Server status
+    group: Servers
+    run: pnpm run cli status
+    params:
+      id: { type: string, position: 0, required: true, description: Server id, choicesFrom: { run: pnpm run cli list, pattern: '^\S+\s+(\S+)' } }
+  start:
+    title: Start a server
+    description: Restores from the last snapshot with the sizing it remembers.
+    group: Servers
+    run: pnpm run cli start
+    params:
+      id: { type: string, position: 0, required: true, description: Server id }
+  stop:
+    title: Stop a server
+    description: Snapshots the disk, then deletes the instance and disk to stop billing. Clears its DNS record.
+    group: Servers
+    run: pnpm run cli stop
+    risk: medium
+    params:
+      id: { type: string, position: 0, required: true, description: Server id }
+  create:
+    title: Create a server
+    description: |
+      Boots a new VM straight to RUNNING. SSH in, install the game, then stop it to snapshot.
+      With no sizing flags in a terminal it asks interactively instead.
+    group: Servers
+    run: pnpm run cli create
+    params:
+      id: { type: string, position: 0, required: true, description: New server id }
+      vcpus: { type: int, option: --vcpus, default: 2 }
+      memory: { type: int, option: --memory, default: 4096, description: MB }
+      disk: { type: int, option: --disk, default: 20, description: GB }
+      ports: { type: list, option: --port, description: 'e.g. tcp:25565, udp:27015-27016' }
+      dns: { type: string, option: --dns, description: Subdomain for a stable address (opt-in) }
+  ports:
+    title: Set open ports
+    description: Replaces the server's firewall rule. No ports = close everything. Running servers apply it live.
+    group: Servers
+    run: pnpm run cli ports
+    params:
+      id: { type: string, position: 0, required: true }
+      ports: { type: list, option: --port, description: 'tcp:N / udp:N-M' }
+  ssh:
+    title: SSH into a server
+    group: Servers
+    kind: interactive
+    run: pnpm run cli ssh
+    params:
+      id: { type: string, position: 0, required: true }
+  destroy:
+    title: Destroy a server
+    description: Deletes the instance, disk AND all snapshots. The game world is gone for good.
+    group: Servers
+    risk: high
+    agent: never
+    run: pnpm run cli destroy
+    params:
+      id: { type: string, position: 0, required: true }
+  sweep:
+    title: Run the uptime sweep now
+    group: Servers
+    run: pnpm run cli sweep
+    params:
+      maxUptime: { type: number, option: --max-uptime, description: Warn past this many hours }
+      autostop: { type: number, option: --autostop, description: Stop past this many hours }
+
+  # ---- Cloud (control plane) ----
+  setup:
+    title: One-time GCP bootstrap
+    description: Enables the GCP APIs and creates the Artifact Registry repo. Run once per project.
+    group: Cloud
+    run: pnpm run setup
+  build-images:
+    title: Build images
+    description: Builds both Cloud Run images in Cloud Build (no local Docker) and pushes them.
+    group: Cloud
+    run: pnpm run build:images
+  deploy:
+    title: Deploy control plane
+    description: Builds the images in the cloud and rolls the Cloud Run services. Note `pnpm deploy` is pnpm's builtin; this uses `pnpm run deploy`.
+    group: Cloud
+    risk: high
+    run: pnpm run deploy
+    params:
+      target: { type: enum, position: 0, choices: [worker, interactions], description: Omit for both }
+      skipBuild: { flag: --skip-build, description: Just roll the latest image(s) }
+  terraform-apply:
+    title: Apply infrastructure
+    description: Applies infra/*.tf with the values in terraform.tfvars.
+    group: Cloud
+    risk: high
+    cwd: infra
+    run: terraform apply
+  register:
+    title: Register Discord commands
+    description: Re-run whenever the slash-command set changes. Empty DISCORD_GUILD_IDS registers globally (up to an hour to show).
+    group: Cloud
+    secrets: [DISCORD_BOT_TOKEN]
+    run: pnpm run register
+  prune-images:
+    title: Prune old images
+    group: Cloud
+    risk: high
+    run: pnpm run prune-images
+    params:
+      dryRun: { flag: --dry-run, description: List what would be deleted; delete nothing }
+
+  # ---- Dev ----
+  test:
+    title: Test everything
+    group: Dev
+    run: pnpm run test
+  typecheck:
+    title: Typecheck everything
+    group: Dev
+    run: pnpm run typecheck
+
+workflows:
+  apply-infra:
+    title: Change cloud config
+    description: The "edit tfvars then deploy" loop.
+    steps:
+      - edit: infra/terraform.tfvars
+        description: Change the setting (see the comments in terraform.tfvars.example).
+      - action: terraform-apply
+      - action: deploy
+  first-time:
+    title: First-time setup
+    steps:
+      - action: setup
+      - edit: infra/terraform.tfvars
+        description: Copy from the example; set project_id, region, enable_control_plane.
+      - action: build-images
+      - action: terraform-apply
+      - action: register

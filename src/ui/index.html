@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>taskdeck</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='6' width='26' height='20' rx='4' fill='%232b4acb'/%3E%3Cpath d='M9 13l4 3-4 3M15 19h7' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="shell">
+    <nav class="rail" aria-label="Repositories">
+      <div class="brand">taskdeck</div>
+      <ul id="repos" class="repo-list"></ul>
+      <form id="add-repo" class="add-repo">
+        <label for="add-path">Add a repo</label>
+        <input id="add-path" placeholder="C:\code\my-app" autocomplete="off" required>
+        <input id="add-contract" placeholder="contract file (optional)" autocomplete="off">
+        <button type="submit">Add</button>
+        <p id="add-error" class="error" hidden></p>
+      </form>
+    </nav>
+
+    <div id="work" class="work">
+      <div class="top">
+        <div class="top-in">
+          <main id="repo" class="repo" aria-live="polite">
+            <div class="empty">
+              <h1>No repo selected</h1>
+              <p>Add a repo with a <code>taskdeck.yaml</code>, or point your agent at <code>AGENT_SETUP.md</code> to write one.</p>
+            </div>
+          </main>
+          <aside id="panel" class="panel" aria-label="Details"></aside>
+        </div>
+      </div>
+      <div id="dock-handle" class="dock-handle" role="separator" tabindex="0" aria-label="Resize terminal"></div>
+      <section id="dock" class="dock" aria-label="Terminals">
+        <div class="dock-bar">
+          <div id="dock-tabs" class="dock-tabs" role="tablist"></div>
+          <div id="dock-status" class="dock-status"></div>
+          <div class="dock-tools">
+            <button id="dock-pos" type="button"></button>
+            <button id="dock-max" type="button"></button>
+            <button id="dock-collapse" type="button"></button>
+          </div>
+        </div>
+        <div id="dock-panes" class="dock-panes"></div>
+      </section>
+    </div>
+  </div>
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

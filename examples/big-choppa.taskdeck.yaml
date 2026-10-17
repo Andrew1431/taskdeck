@@ -1,0 +1,83 @@
+version: 1
+name: Big Choppa (Big Walk mod)
+description: |
+  BepInEx 6 IL2CPP mod. Dev builds include #if DEVBUILD code (auto-host) and install into the
+  game's BepInEx or the r2modman "Dev" profile — never the Default profile.
+
+configs:
+  remote-targets:
+    file: remote-targets.txt
+    format: lines
+    local: true
+    description: One UNC path per line to another PC's Big Walk folder; build pushes the DLL there. "#" disables a line.
+  plugin-config:
+    file: '%APPDATA%/r2modmanPlus-local/BigWalk/profiles/Dev/BepInEx/config/com.andrew1431.bigchoppa.cfg'
+    format: ini
+    local: true
+    description: Live mod settings in the Dev profile ([Dev] AutoHost, Debug.VerboseLogging...).
+
+actions:
+  build:
+    title: Build + install (dev)
+    description: Builds against the game's BepInEx interop, installs to the plugin folder, then pushes to every remote target.
+    group: Dev
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+    params:
+      gameDir: { type: path, option: -GameDirectory, default: 'E:\SteamLibrary\steamapps\common\Big Walk' }
+      bepinexDir: { type: path, option: -BepInExDirectory, description: "Defaults to the game's BepInEx, else the r2modman Dev profile" }
+      installBepInEx: { flag: -InstallBepInEx, description: "Also copy the loader + interop to remote targets (first time, or after a game update)" }
+  log:
+    title: Show the BepInEx log
+    group: Dev
+    run:
+      windows: powershell -NoProfile -Command "Get-Content -Tail 200 $env:APPDATA\r2modmanPlus-local\BigWalk\profiles\Dev\BepInEx\LogOutput.log"
+  make-icon:
+    title: Regenerate icon
+    group: Release
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File thunderstore/make-icon.ps1
+  package:
+    title: Package for Thunderstore
+    description: Publish build (no dev code) zipped to dist/. Refuses a DLL containing DevAutoHost.
+    group: Release
+    requires: [thunderstore/manifest.json and Plugin.cs PluginVersion match]
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+  publish:
+    title: Publish to Thunderstore
+    description: Packages and uploads with tcli. Versions can't be re-uploaded or deleted, only deprecated.
+    group: Release
+    risk: high
+    agent: propose
+    secrets: [TCLI_AUTH_TOKEN]
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 -Upload
+  stats-preview:
+    title: Preview stats card
+    group: Stats worker
+    cwd: stats-worker
+    run: npm run preview
+  stats-deploy:
+    title: Deploy stats worker
+    group: Stats worker
+    risk: high
+    cwd: stats-worker
+    run: npm run deploy
+
+workflows:
+  release:
+    title: Release a version
+    steps:
+      - manual: Load-test the dev build in the r2modman Dev profile.
+      - edit: thunderstore/manifest.json
+        description: Bump version_number.
+      - edit: Plugin.cs
+        description: Bump PluginVersion to match. Bump ChoppaNet.Protocol too if the wire format changed.
+      - edit: thunderstore/CHANGELOG.md
+      - action: publish
+  second-pc:
+    title: Resume second-PC testing
+    steps:
+      - edit: remote-targets.txt
+        description: Uncomment the PC's line.
+      - manual: Close the game on that PC.
+      - action: build
+        with: { installBepInEx: true }
+      - manual: They launch from Steam (not r2modman) to get the dev build.

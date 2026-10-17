@@ -1,0 +1,70 @@
+version: 1
+name: CozyCats (Lethal Company mod)
+description: BepInEx mod. Debug builds auto-host/join via --cozy-dev; Release builds ship to Thunderstore.
+
+configs:
+  manifest:
+    file: thunderstore/manifest.json
+    format: json
+    description: Thunderstore package metadata. version_number must match CozyCats.csproj <Version>.
+
+actions:
+  build:
+    title: Build (Debug)
+    group: Dev
+    run: dotnet build CozyCats/CozyCats.csproj -c Debug
+  launch:
+    title: Launch host + clients side by side
+    description: Starts a LAN host plus clients on this PC using an r2modman profile. Debug builds skip the menus.
+    group: Dev
+    kind: detached
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File launch-two.ps1
+    params:
+      count: { type: int, option: -Count, default: 2, description: Games to start (first one hosts) }
+      profile: { type: string, option: -Profile, default: CatDev, description: r2modman profile with BepInEx }
+      gameDir: { type: path, option: -GameDir, description: Lethal Company install folder }
+      manual: { flag: -Manual, description: Leave the menus to you }
+  kill:
+    title: Close all games
+    description: Closes every Lethal Company window gracefully so saves finish, then force-kills stragglers.
+    group: Dev
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File kill-games.ps1
+    params:
+      timeout: { type: int, option: -TimeoutSeconds, default: 10 }
+  package:
+    title: Package for Thunderstore
+    description: Builds Release and zips dist/<Team>-<Name>-<version>.zip. Refuses DLLs with debug keys.
+    group: Release
+    requires:
+      - Asset bundle built in Unity (BuildCat.Build)
+      - manifest.json and CozyCats.csproj versions match
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+    params:
+      team: { type: string, option: -Team, default: Andrew1431 }
+  publish:
+    title: Publish to Thunderstore + GitHub
+    description: Packages, uploads with tcli, then creates the GitHub release. Versions can never be re-uploaded.
+    group: Release
+    risk: high
+    agent: propose
+    secrets: [TCLI_AUTH_TOKEN]
+    run: powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 -Upload
+
+workflows:
+  playtest:
+    title: Rebuild and playtest
+    steps:
+      - action: kill
+      - action: build
+      - action: launch
+  release:
+    title: Release a version
+    steps:
+      - manual: Build the asset bundle in Unity (BuildCat.Build) if art changed.
+      - edit: thunderstore/manifest.json
+        description: Bump version_number.
+      - edit: CozyCats/CozyCats.csproj
+        description: Bump <Version> to match.
+      - edit: thunderstore/CHANGELOG.md
+        description: Add a "## <version>" section.
+      - action: publish
