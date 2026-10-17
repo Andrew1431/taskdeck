@@ -1,7 +1,6 @@
 {
   "name": "taskdeck",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "description": "A taskdeck.yaml contract for the commands in your repo: run them from a local web UI, the CLI, or your AI agent over MCP.",
   "license": "Unlicense",
@@ -11,9 +10,6 @@
   },
   "bin": {
     "taskdeck": "./src/cli.mjs"
-  },
-  "scripts": {
-    "discover": "node src/cli.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -26,5 +22,25 @@
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "ai",
+    "agent",
+    "tasks",
+    "task-runner",
+    "scripts",
+    "cli",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/Andrew1431/taskdeck#readme",
+  "bugs": {
+    "url": "https://github.com/Andrew1431/taskdeck/issues"
+  },
+  "files": [
+    "src",
+    "examples",
+    "CONTRACT.md",
+    "AGENT_SETUP.md"
+  ]
 }

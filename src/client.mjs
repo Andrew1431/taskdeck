@@ -19,10 +19,31 @@ function info() {
 async function healthy(d) {
   try {
     const r = await fetch(`http://127.0.0.1:${d.port}/api/health`, { headers: { 'x-taskdeck-token': d.token }, signal: AbortSignal.timeout(1500) });
-    return r.ok;
+    return r.ok ? await r.json() : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// The running daemon's info and health, or null. Never starts one.
+export async function daemonStatus() {
+  const d = info();
+  const h = d && (await healthy(d));
+  return h ? { ...d, ...h } : null;
+}
+
+export async function stopDaemon(force) {
+  const d = await daemonStatus();
+  if (!d) return null;
+  const r = await fetch(`http://127.0.0.1:${d.port}/api/shutdown`, {
+    method: 'POST',
+    headers: { 'x-taskdeck-token': d.token, 'content-type': 'application/json' },
+    body: JSON.stringify({ force: !!force }),
+  });
+  const out = { status: r.status, data: await r.json() };
+  // The daemon replies first, then waits for stopped runs to finish before it exits.
+  for (let i = 0; r.ok && i < 60 && (await healthy(d)); i++) await new Promise((res) => setTimeout(res, 100));
+  return out;
 }
 
 export async function ensureDaemon() {

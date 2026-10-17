@@ -10,11 +10,12 @@ import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { load, buildInvocation, baseArgv, expandPath, FILE } from './contract.mjs';
 import { DAEMON_FILE, ensureHome, readState, writeState } from './home.mjs';
-import { startRun, stopRun, subscribe, getRun, getLog, listRuns, markOrphans, openInTerminal, commandLine, cmdExeLine, writeInput, resizeRun, ptyAvailable } from './runner.mjs';
+import { startRun, stopRun, subscribe, getRun, getLog, listRuns, markOrphans, openInTerminal, commandLine, cmdExeLine, writeInput, resizeRun, ptyAvailable, liveRuns } from './runner.mjs';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 export const DEFAULT_PORT = 4477;
+let shutdown = () => process.exit(0);
 
 export async function startDaemon({ port = DEFAULT_PORT } = {}) {
   ensureHome();
@@ -23,13 +24,13 @@ export async function startDaemon({ port = DEFAULT_PORT } = {}) {
   const server = createServer((req, res) => handle(req, res, token, server.address().port).catch((e) => send(res, 500, { error: e.message })));
   const actualPort = await listen(server, port);
   writeFileSync(DAEMON_FILE, JSON.stringify({ port: actualPort, token, pid: process.pid, startedAt: Date.now() }, null, 2));
-  const cleanup = () => {
+  const cleanup = (shutdown = () => {
     try {
       const d = JSON.parse(readFileSync(DAEMON_FILE, 'utf8'));
       if (d.pid === process.pid) unlinkSync(DAEMON_FILE);
     } catch {}
     process.exit(0);
-  };
+  });
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
   return { port: actualPort, token };
@@ -59,7 +60,17 @@ async function handle(req, res, token, port) {
   const m = (re) => path.match(re);
   let p;
 
-  if (path === '/api/health') return send(res, 200, { ok: true, pid: process.pid, pty: ptyAvailable() });
+  if (path === '/api/health') return send(res, 200, { ok: true, pid: process.pid, pty: ptyAvailable(), uptime: Math.round(process.uptime()), running: liveRuns().length, rss: process.memoryUsage().rss });
+  if (path === '/api/shutdown' && req.method === 'POST') {
+    const running = liveRuns();
+    if (running.length && !body.force) return send(res, 409, { error: 'runs still going', running: running.map((r) => ({ id: r.id, title: r.title, repoId: r.repoId })) });
+    for (const r of running) stopRun(r.id);
+    send(res, 200, { ok: true, stopped: running.length });
+    // Give taskkill/SIGTERM a moment so stopped runs get their final status written.
+    const deadline = Date.now() + 3000;
+    const wait = () => (liveRuns().length && Date.now() < deadline ? setTimeout(wait, 100) : shutdown());
+    return wait();
+  }
 
   // ---- repos ----
   if (path === '/api/repos' && req.method === 'GET') return send(res, 200, repos().map(summary));

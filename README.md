@@ -27,7 +27,8 @@ npx taskdeck ui
 Every action is a form: fill in the blanks, watch the exact command update, press Run and
 watch it in a real terminal (colors, progress bars, prompts you can type into), or send it
 to your own terminal with "Open in my terminal". Runs keep going if you close the tab.
-(Real terminals come from the optional `node-pty` dependency; without it, output is piped.) High-risk actions ask you to confirm. Workflows are checklists. Things
+(Real terminals come from the optional `node-pty` dependency, prebuilt for Windows and macOS;
+on Linux it needs build tools, and without it output is piped.) High-risk actions ask you to confirm. Workflows are checklists. Things
 your agent suggested wait under "Waiting for you" until you run or dismiss them.
 
 Give your agent the same deck over MCP (Claude Code shown; any MCP client works):
@@ -59,6 +60,20 @@ npx taskdeck check
 ```
 
 `check` validates the contract and lists commands in the repo the contract doesn't cover yet.
+
+The daemon is one idle Node process (about 60 MB, no CPU while nothing runs). It doesn't
+start at login. Check on it or stop it with:
+
+```bash
+npx taskdeck status
+```
+
+```bash
+npx taskdeck stop
+```
+
+`stop` refuses while runs are still going; `--force` stops them too. Your repo list and run
+history stay in `~/.taskdeck` either way.
 
 ## Status
 

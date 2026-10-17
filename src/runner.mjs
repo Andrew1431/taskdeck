@@ -196,6 +196,8 @@ export function stopRun(id) {
   return true;
 }
 
+export const liveRuns = () => [...live.values()].map((e) => e.record);
+
 export function subscribe(id, onData, onEnd) {
   const entry = live.get(id);
   if (!entry) return null;

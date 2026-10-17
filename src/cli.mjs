@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline/promises';
 import { load, buildInvocation, baseArgv, expandPath } from './contract.mjs';
 import { discoverRepo } from './discover.mjs';
 import { renderReport } from './report.mjs';
-import { api, uiUrl } from './client.mjs';
+import { api, uiUrl, daemonStatus, stopDaemon } from './client.mjs';
 
 const USAGE = `taskdeck — one contract for every command in a repo
 
@@ -18,6 +18,8 @@ const USAGE = `taskdeck — one contract for every command in a repo
 
   taskdeck ui                         open the web UI (starts the background daemon)
   taskdeck add [dir]                  add a repo to the UI (--contract <file> for one kept elsewhere)
+  taskdeck status                     is the background daemon running, and what is it doing
+  taskdeck stop                       stop the daemon (--force also stops runs still going)
   taskdeck mcp                        MCP server on stdio, for your agent's MCP config
   taskdeck daemon                     run the daemon in the foreground
 
@@ -28,7 +30,7 @@ const USAGE = `taskdeck — one contract for every command in a repo
 const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
 
 try {
-  await ({ list, show, run, check, discover, ui, add, mcp, daemon }[cmd] ?? help)();
+  await ({ list, show, run, check, discover, ui, add, status, stop, mcp, daemon }[cmd] ?? help)();
 } catch (e) {
   console.error(e.message);
   process.exit(1);
@@ -188,6 +190,27 @@ async function add() {
   const r = await api('POST', '/api/repos', { path: resolve(dir), contract: flags.contract ? resolve(flags.contract) : undefined });
   if (!r.ok) throw new Error(r.data.error);
   console.log(`Added ${r.data.name} (${r.data.actionCount} actions)${r.data.errors.length ? ` with ${r.data.errors.length} contract problem(s)` : ''}`);
+}
+
+async function status() {
+  const d = await daemonStatus();
+  if (flags.json) return console.log(JSON.stringify(d));
+  if (!d) return console.log('taskdeck daemon is not running');
+  const mins = Math.round(d.uptime / 60);
+  console.log(`taskdeck daemon on http://127.0.0.1:${d.port} (pid ${d.pid}), up ${mins < 60 ? `${mins}m` : `${(mins / 60).toFixed(1)}h`}, ${Math.round(d.rss / 1048576)} MB, ${d.running} run(s) going`);
+}
+
+async function stop() {
+  const r = await stopDaemon(flags.force);
+  if (!r) return console.log('taskdeck daemon is not running');
+  if (r.status === 409) {
+    console.error(`${r.data.running.length} run(s) still going:`);
+    for (const x of r.data.running) console.error(`  ${x.title} (${x.id})`);
+    console.error('Stop them in the UI, or run `taskdeck stop --force` to stop them with the daemon.');
+    process.exitCode = 1; // not exit(): on Windows that can abort while fetch's socket is closing
+    return;
+  }
+  console.log(`Stopped the taskdeck daemon${r.data.stopped ? ` and ${r.data.stopped} run(s)` : ''}`);
 }
 
 async function mcp() {
