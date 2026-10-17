@@ -1,0 +1,33 @@
+# Publishes to npm when a v* tag is pushed (`npm version patch && git push --follow-tags`).
+# Uses npm trusted publishing (OIDC): no token; npm verifies this workflow, then adds provenance.
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1+.
+      - run: npm install -g npm@latest
+      - name: Tag matches package.json
+        run: |
+          v="$(node -p 'require("./package.json").version')"
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but package.json says $v"; exit 1; }
+      - run: npm ci --ignore-scripts
+      - name: Smoke test
+        run: |
+          node src/cli.mjs check
+          npm pack --dry-run
+      - run: npm publish --provenance --access public

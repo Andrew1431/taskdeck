@@ -1,0 +1,80 @@
+version: 1
+name: taskdeck
+description: >-
+  The taskdeck CLI, daemon, web UI and MCP server. Plain Node ESM with no build step: the
+  UI files in src/ui are served from disk, so UI edits only need a browser reload. Changes
+  to the daemon (src/daemon.mjs, src/runner.mjs) need `taskdeck stop --force` and a fresh
+  `taskdeck ui` from your own terminal. Releases are published to npm by GitHub Actions when
+  a v* tag is pushed.
+
+actions:
+  link:
+    title: Use this checkout as the global taskdeck
+    description: >-
+      npm link puts a `taskdeck` command on your PATH that runs this folder's code, so
+      `taskdeck ui` anywhere uses your edits. Undo with `npm rm -g taskdeck`.
+    group: Dev
+    run: npm link
+
+  check:
+    title: Check this repo's contract
+    description: Validates taskdeck.yaml and lists commands discovery found that the contract doesn't cover.
+    group: Dev
+    run: node src/cli.mjs check
+
+  discover:
+    title: Discover commands in a repo
+    description: >-
+      Prints the draft facts (npm scripts, PowerShell param blocks) an agent starts from when
+      writing a contract. Handy for testing the adapters in src/adapters against a real repo.
+    group: Dev
+    run: node src/cli.mjs discover
+    params:
+      repos: { type: list, position: 0, description: Repo folders to scan, default: this repo }
+      json: { type: bool, flag: --json, description: Full catalog as JSON instead of the report }
+
+  mcp-inspector:
+    title: Try the MCP server in MCP Inspector
+    description: >-
+      Opens the official MCP Inspector against `taskdeck mcp`, to call list/describe/run the
+      way an agent would. Needs a daemon running (open the UI first).
+    group: Dev
+    kind: service
+    run: npx -y @modelcontextprotocol/inspector node src/cli.mjs mcp
+
+  pack:
+    title: Preview the npm package
+    description: Lists exactly which files would be published and the package size. Changes nothing.
+    group: Release
+    run: npm pack --dry-run
+
+  version:
+    title: Bump the version
+    description: >-
+      Updates package.json and package-lock.json, commits, and creates the matching v* tag
+      locally. Nothing is published until you push the tag. Needs a clean working tree.
+    group: Release
+    risk: medium
+    run: npm version
+    params:
+      bump: { type: enum, position: 0, required: true, choices: [patch, minor, major], default: patch, description: 'patch for fixes, minor for features, major for breaking contract changes' }
+
+  release:
+    title: Push and publish
+    description: >-
+      Pushes main and the version tag. The tag starts the Publish workflow on GitHub, which
+      checks the tag matches package.json and publishes to npm with provenance. A published
+      version can't be reused, even after unpublishing.
+    group: Release
+    risk: high
+    run: git push --follow-tags
+
+workflows:
+  release:
+    title: Release a new version
+    steps:
+      - manual: Commit everything you want in the release; npm version refuses a dirty tree.
+      - action: pack
+      - action: version
+      - action: release
+      - manual: Watch the Publish run at https://github.com/Andrew1431/taskdeck/actions, then `npx taskdeck@latest status` to confirm.
