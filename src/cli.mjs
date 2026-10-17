@@ -20,7 +20,7 @@ const USAGE = `taskdeck — one contract for every command in a repo
   taskdeck ui                         open the UI in its own window (--browser for a normal tab)
   taskdeck add [dir]                  add a repo to the UI (--contract <file> for one kept elsewhere)
   taskdeck remove [dir|id]            take a repo out of the UI; files untouched (--force stops its runs)
-  taskdeck status                  is the background daemon running, and what is it doing
+  taskdeck status                     is the background daemon running, and what is it doing
   taskdeck stop                       stop the daemon (--force also stops runs still going)
   taskdeck mcp                        MCP server on stdio, for your agent's MCP config
   taskdeck daemon                     run the daemon in the foreground
@@ -51,7 +51,7 @@ function ctx() {
 
 function find(c, id) {
   const a = c.doc.actions.find((x) => x.id === id);
-  if (!a) throw new Error(`No action '${id}'. Try: ${c.doc.actions.map((x) => x.id).join(', ')}`);
+  if (!a) throw new Error(`${id ? `No action '${id}'` : 'Which action?'} Try: ${c.doc.actions.map((x) => x.id).join(', ')}`);
   return a;
 }
 
@@ -237,6 +237,9 @@ async function mcp() {
 }
 
 async function daemon() {
+  // A second daemon would overwrite daemon.json and orphan the first one.
+  const running = await daemonStatus();
+  if (running) throw new Error(`taskdeck daemon is already running on http://127.0.0.1:${running.port} (pid ${running.pid}). Stop it first with \`taskdeck stop\`.`);
   const { startDaemon } = await import('./daemon.mjs');
   const { port } = await startDaemon({ port: flags.port ? Number(flags.port) : undefined });
   console.log(`taskdeck daemon on http://127.0.0.1:${port} (pid ${process.pid})`);
