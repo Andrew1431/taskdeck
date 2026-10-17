@@ -18,7 +18,8 @@ It discovers the commands, reads your docs, writes `taskdeck.yaml` and checks it
 
 ## Use it
 
-Open the UI. It starts a small background daemon on `127.0.0.1` and adds the current repo:
+Open the UI. It starts a small background daemon on `127.0.0.1`, adds the current repo and
+opens in its own window (Chrome, Edge or Brave app mode; `--browser` for a normal tab):
 
 ```bash
 npx taskdeck ui
@@ -79,7 +80,8 @@ history stay in `~/.taskdeck` either way.
 
 Early prototype. Today: the contract format ([CONTRACT.md](CONTRACT.md)), discovery
 helpers for npm-family scripts and PowerShell, the CLI, the local web UI and the MCP
-server. See [examples/](examples/) for real contracts.
+server. See [examples/](examples/) for real contracts and [ROADMAP.md](ROADMAP.md) for
+what might come next.
 
 State lives in `~/.taskdeck` (repos, run logs, proposals; `TASKDECK_HOME` overrides it).
 The daemon only listens on 127.0.0.1 and every API call needs the token in

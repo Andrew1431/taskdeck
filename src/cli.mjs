@@ -7,6 +7,7 @@ import { load, buildInvocation, baseArgv, expandPath } from './contract.mjs';
 import { discoverRepo } from './discover.mjs';
 import { renderReport } from './report.mjs';
 import { api, uiUrl, daemonStatus, stopDaemon } from './client.mjs';
+import { openUi } from './open.mjs';
 
 const USAGE = `taskdeck — one contract for every command in a repo
 
@@ -16,7 +17,7 @@ const USAGE = `taskdeck — one contract for every command in a repo
   taskdeck check                      validate the contract and look for drift
   taskdeck discover [repo...]         draft facts from npm scripts / .ps1 files (for your agent)
 
-  taskdeck ui                         open the web UI (starts the background daemon)
+  taskdeck ui                         open the UI in its own window (--browser for a normal tab)
   taskdeck add [dir]                  add a repo to the UI (--contract <file> for one kept elsewhere)
   taskdeck status                     is the background daemon running, and what is it doing
   taskdeck stop                       stop the daemon (--force also stops runs still going)
@@ -181,8 +182,7 @@ async function ui() {
   if (existsSync(join(resolve(flags.repo ?? '.'), 'taskdeck.yaml')) || flags.contract) await add();
   const url = await uiUrl();
   console.log(`taskdeck UI: ${url.replace(/#.*/, '')}`);
-  const opener = process.platform === 'win32' ? ['cmd.exe', ['/c', 'start', '""', `"${url}"`]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
-  spawn(opener[0], opener[1], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref();
+  openUi(url, { appMode: !flags.browser });
 }
 
 async function add() {
