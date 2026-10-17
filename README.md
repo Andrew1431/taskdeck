@@ -20,22 +20,20 @@ and how risky it is:
 
 ## Get started
 
-Add taskdeck to your agent once. In Claude Code:
+Add taskdeck to your agents once:
 
 ```bash
-claude mcp add taskdeck --scope user -- npx -y taskdeck@latest mcp
+npx taskdeck init
 ```
 
-In Windows PowerShell, quote the `--` and run it through `cmd /c`:
+`init` adds taskdeck's MCP server to every client it finds on this machine: Claude Code,
+Cursor, VS Code and Windsurf. It uses the right command for your OS and skips clients that
+already have it. `--dry-run` shows what it would change. For any other MCP client, add the
+server yourself: `"command": "npx", "args": ["-y", "taskdeck@latest", "mcp"]` (on Windows,
+`"command": "cmd", "args": ["/c", "npx", "-y", "taskdeck@latest", "mcp"]`).
 
-```powershell
-claude mcp add taskdeck --scope user '--' cmd /c npx -y taskdeck@latest mcp
-```
-
-Other MCP clients (Cursor, VS Code, Windsurf...) take the same command in their MCP config:
-`"command": "npx", "args": ["-y", "taskdeck@latest", "mcp"]`.
-
-Then open a new chat in any repo and say:
+Then open a new chat in any repo (chats that are already open don't load new MCP servers)
+and say:
 
 > set up taskdeck
 
@@ -124,6 +122,17 @@ npx taskdeck stop
 
 `stop` refuses while runs are still going; `--force` stops them too. Your repo list and run
 history stay in `~/.taskdeck` either way.
+
+## Uninstall
+
+```bash
+npx taskdeck uninstall
+```
+
+This command takes taskdeck out of every client `init` set up and stops the daemon. It
+refuses while runs are going; `--force` stops them too. Your repo list and run history stay
+in `~/.taskdeck` unless you add `--purge`. It never touches the `taskdeck.yaml` files in
+your repos. If you also installed taskdeck globally, run `npm rm -g taskdeck`.
 
 ## Status
 

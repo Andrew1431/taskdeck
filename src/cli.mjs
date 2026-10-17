@@ -11,7 +11,10 @@ import { openUi } from './open.mjs';
 
 const USAGE = `taskdeck — a task runner for you and your coding agent
 
-  taskdeck list                       actions in this repo's taskdeck.yaml
+  taskdeck init                       add taskdeck's MCP server to Claude Code, Cursor, VS Code, Windsurf
+  taskdeck uninstall                  remove it again and stop the daemon (--purge also deletes ~/.taskdeck)
+
+  taskdeck list                      actions in this repo's taskdeck.yaml
   taskdeck show <action>              docs, params and the exact command
   taskdeck run <action> [k=v ...]     run it (--dry-run prints the command, --yes skips confirm)
   taskdeck check                      validate the contract and look for drift
@@ -32,7 +35,7 @@ const USAGE = `taskdeck — a task runner for you and your coding agent
 const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
 
 try {
-  await ({ list, show, run, check, discover, ui, add, remove, status, stop, mcp, daemon }[cmd] ?? help)();
+  await ({ init, uninstall, list, show, run, check, discover, ui, add, remove, status, stop, mcp, daemon }[cmd] ?? help)();
 } catch (e) {
   console.error(e.message);
   process.exitCode = 1;
@@ -41,6 +44,23 @@ try {
 function help() {
   console.log(USAGE);
   if (cmd && cmd !== 'help') process.exit(2);
+}
+
+async function init() {
+  const lines = (await import('./install.mjs')).init({ dryRun: flags['dry-run'] });
+  console.log(lines.join('\n'));
+  if (lines.some((l) => l.startsWith('✓') || l.startsWith('→'))) {
+    console.log('\nOpen a new chat in a repo (already-open chats don\'t load new MCP servers) and say: set up taskdeck');
+  } else {
+    console.log('\nNo supported client found. Add this MCP server to yours: npx -y taskdeck@latest mcp');
+  }
+  if (lines.some((l) => l.startsWith('✗'))) process.exitCode = 1;
+}
+
+async function uninstall() {
+  const lines = await (await import('./install.mjs')).uninstall({ dryRun: flags['dry-run'], force: flags.force, purge: flags.purge });
+  console.log(lines.join('\n'));
+  if (lines.some((l) => l.startsWith('✗'))) process.exitCode = 1;
 }
 
 function ctx() {
