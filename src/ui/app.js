@@ -98,6 +98,23 @@ async function loadRepos() {
   renderRail();
 }
 
+// Only unregisters it: the repo and its taskdeck.yaml stay where they are.
+async function removeRepo(d) {
+  if (!confirm(`Remove ${d.name} from taskdeck? Its files and taskdeck.yaml stay where they are.`)) return;
+  let r = await api('DELETE', `/api/repos/${d.id}`, {});
+  if (r.status === 409) {
+    if (!confirm(`${r.data.running.length} run(s) in ${d.name} are still going. Stop them and remove it?`)) return;
+    r = await api('DELETE', `/api/repos/${d.id}`, { force: true });
+  }
+  if (!r.ok) return alert(r.data.error);
+  state.repoId = state.repo = state.selected = null;
+  localStorage.removeItem('taskdeck-repo');
+  await loadRepos();
+  if (state.repos[0]) return selectRepo(state.repos[0].id);
+  fill($('repo'), h('div', { class: 'empty' }, h('h1', {}, 'No repo selected'), h('p', {}, 'Add a repo with a ', h('code', {}, 'taskdeck.yaml'), '.')));
+  fill($('panel'));
+}
+
 async function selectRepo(id) {
   const r = await api('GET', `/api/repos/${id}`);
   if (!r.ok) {
@@ -145,7 +162,7 @@ function renderRepo() {
   fill($('repo'), 
     h('header', { class: 'repo-head' },
       h('h1', {}, d.name),
-      h('div', { class: 'path' }, d.path),
+      h('div', { class: 'path' }, d.path, h('button', { class: 'link remove-repo', onclick: () => removeRepo(d) }, 'Remove from taskdeck')),
       d.description && h('p', { class: 'desc' }, prose(d.description)),
       d.errors.length > 0 && h('div', { class: 'problems' }, h('strong', {}, 'The contract has problems'), h('ul', {}, d.errors.map((e) => h('li', {}, e))))),
     h('div', { id: 'activity' }),

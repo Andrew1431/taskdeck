@@ -119,6 +119,7 @@ button.link { border: 0; background: none; color: var(--cobalt); padding: 0; cur
 .empty h1 { color: var(--ink); font-size: 22px; margin-bottom: 8px; }
 .repo-head h1 { font-size: 26px; letter-spacing: -0.015em; }
 .repo-head .path { color: var(--ink-soft); font-family: var(--mono); font-size: 12.5px; margin-top: 4px; word-break: break-all; }
+.repo-head .remove-repo { margin-left: 12px; font-family: var(--sans); font-size: 12px; }
 .repo-head .desc { max-width: 72ch; margin: 12px 0 0; white-space: pre-line; }
 .problems { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--red); background: var(--red-wash); font-size: 13.5px; }
 .problems ul { margin: 4px 0 0; padding-left: 18px; }

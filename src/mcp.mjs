@@ -60,6 +60,16 @@ const TOOLS = [
     description: "Recent runs in this repo (from the UI, agents or CLI): what ran, when, and whether it worked.",
     inputSchema: { type: 'object', properties: { repo: { type: 'string' }, limit: { type: 'number', default: 15 } } },
   },
+  {
+    name: 'taskdeck_add',
+    description: "Add a repo to the user's taskdeck UI. Pass contract when its taskdeck.yaml lives somewhere other than the repo root (e.g. a generated contract spanning several worktrees).",
+    inputSchema: { type: 'object', required: ['path'], properties: { path: { type: 'string', description: 'Repo root (action cwd paths resolve from here).' }, contract: { type: 'string' } } },
+  },
+  {
+    name: 'taskdeck_remove',
+    description: "Take a repo out of the user's taskdeck UI, e.g. when tearing down a worktree. Its files and taskdeck.yaml are untouched; pending proposals for it are dismissed. Refuses while its runs are going unless force is true.",
+    inputSchema: { type: 'object', required: ['repo'], properties: { repo: { type: 'string', description: 'Repo path or taskdeck repo id.' }, force: { type: 'boolean', default: false } } },
+  },
 ];
 
 export function startMcp() {
@@ -164,6 +174,19 @@ async function callTool(name, args) {
       const runs = must(await api('GET', `/api/runs?repo=${repo.id}&limit=${args.limit ?? 15}`));
       if (!runs.length) return 'No runs yet.';
       return runs.map((r) => `${new Date(r.startedAt).toISOString()}  ${r.actionId.padEnd(16)} ${r.status}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''} by ${r.by}  run_id ${r.id}`).join('\n');
+    }
+    case 'taskdeck_add': {
+      const r = must(await api('POST', '/api/repos', { path: resolve(args.path), contract: args.contract ? resolve(args.contract) : undefined }));
+      return `Added ${r.name} (repo id ${r.id}, ${r.actionCount} actions)${r.errors.length ? `. Contract problems: ${r.errors.join('; ')}` : ''}`;
+    }
+    case 'taskdeck_remove': {
+      const repos = must(await api('GET', '/api/repos'));
+      const repo = repos.find((r) => r.id === args.repo) ?? repos.find((r) => r.path.toLowerCase() === resolve(args.repo).toLowerCase());
+      if (!repo) throw new Error(`'${args.repo}' isn't in taskdeck. Registered: ${repos.map((r) => r.id).join(', ') || '(none)'}`);
+      const r = await api('DELETE', `/api/repos/${repo.id}`, { force: !!args.force });
+      if (r.status === 409) return `Not removed: ${r.data.running.length} run(s) still going (${r.data.running.map((x) => x.title).join(', ')}). Pass force: true to stop them, after checking with the user.`;
+      must(r);
+      return `Removed ${repo.name} from taskdeck${r.data.stopped ? ` and stopped ${r.data.stopped} run(s)` : ''}. Its files are untouched.`;
     }
     default:
       throw new Error(`unknown tool ${name}`);

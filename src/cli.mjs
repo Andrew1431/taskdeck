@@ -19,7 +19,8 @@ const USAGE = `taskdeck — one contract for every command in a repo
 
   taskdeck ui                         open the UI in its own window (--browser for a normal tab)
   taskdeck add [dir]                  add a repo to the UI (--contract <file> for one kept elsewhere)
-  taskdeck status                     is the background daemon running, and what is it doing
+  taskdeck remove [dir|id]            take a repo out of the UI; files untouched (--force stops its runs)
+  taskdeck status                  is the background daemon running, and what is it doing
   taskdeck stop                       stop the daemon (--force also stops runs still going)
   taskdeck mcp                        MCP server on stdio, for your agent's MCP config
   taskdeck daemon                     run the daemon in the foreground
@@ -31,10 +32,10 @@ const USAGE = `taskdeck — one contract for every command in a repo
 const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
 
 try {
-  await ({ list, show, run, check, discover, ui, add, status, stop, mcp, daemon }[cmd] ?? help)();
+  await ({ list, show, run, check, discover, ui, add, remove, status, stop, mcp, daemon }[cmd] ?? help)();
 } catch (e) {
   console.error(e.message);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 function help() {
@@ -190,6 +191,24 @@ async function add() {
   const r = await api('POST', '/api/repos', { path: resolve(dir), contract: flags.contract ? resolve(flags.contract) : undefined });
   if (!r.ok) throw new Error(r.data.error);
   console.log(`Added ${r.data.name} (${r.data.actionCount} actions)${r.data.errors.length ? ` with ${r.data.errors.length} contract problem(s)` : ''}`);
+}
+
+async function remove() {
+  const arg = positional[0] ?? flags.repo ?? '.';
+  const repos = (await api('GET', '/api/repos')).data;
+  const path = resolve(arg).toLowerCase();
+  const repo = repos.find((r) => r.id === arg) ?? repos.find((r) => r.path.toLowerCase() === path);
+  if (!repo) throw new Error(`${arg} isn't in taskdeck. Registered: ${repos.map((r) => r.id).join(', ') || '(none)'}`);
+  const r = await api('DELETE', `/api/repos/${repo.id}`, { force: !!flags.force });
+  if (r.status === 409) {
+    console.error(`${r.data.running.length} run(s) in ${repo.name} still going:`);
+    for (const x of r.data.running) console.error(`  ${x.title} (${x.id})`);
+    console.error('Stop them first, or run `taskdeck remove --force` to stop them too.');
+    process.exitCode = 1;
+    return;
+  }
+  if (!r.ok) throw new Error(r.data.error);
+  console.log(`Removed ${repo.name}${r.data.stopped ? ` and stopped ${r.data.stopped} run(s)` : ''} (its files are untouched)`);
 }
 
 async function status() {

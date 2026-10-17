@@ -79,8 +79,14 @@ async function handle(req, res, token, port) {
     const r = repoOr404(p[1], res);
     if (!r) return;
     if (req.method === 'DELETE') {
+      const running = liveRuns().filter((x) => x.repoId === r.id);
+      if (running.length && !body.force) return send(res, 409, { error: 'runs still going', running: running.map((x) => ({ id: x.id, title: x.title })) });
+      for (const x of running) stopRun(x.id);
       writeState('repos', repos().filter((x) => x.id !== r.id));
-      return send(res, 200, { ok: true });
+      const all = proposals();
+      for (const prop of all.filter((x) => x.repoId === r.id && x.status === 'pending')) Object.assign(prop, { status: 'dismissed', closedAt: Date.now() });
+      writeState('proposals', all);
+      return send(res, 200, { ok: true, id: r.id, name: summary(r).name, stopped: running.length });
     }
     return send(res, 200, detail(r));
   }

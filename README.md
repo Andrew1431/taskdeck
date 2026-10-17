@@ -62,6 +62,19 @@ npx taskdeck check
 
 `check` validates the contract and lists commands in the repo the contract doesn't cover yet.
 
+Repos can be added and removed from scripts, e.g. when spinning worktrees up and down. The
+contract can live outside the repo (action `cwd`s resolve from the repo root you pass):
+
+```bash
+npx taskdeck add ../feat-login --contract ../feat-login.taskdeck.yaml
+```
+
+```bash
+npx taskdeck remove ../feat-login
+```
+
+`remove` only takes it out of the UI; files stay put. Agents have the same pair over MCP.
+
 The daemon is one idle Node process (about 60 MB, no CPU while nothing runs). It doesn't
 start at login. Check on it or stop it with:
 
