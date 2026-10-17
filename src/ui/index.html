@@ -7,16 +7,19 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='6' width='26' height='20' rx='4' fill='%232b4acb'/%3E%3Cpath d='M9 13l4 3-4 3M15 19h7' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/vendor/xterm.css">
   <link rel="stylesheet" href="/style.css">
+  <script>try { const t = localStorage.getItem('taskdeck-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}</script>
 </head>
 <body>
   <div class="shell">
     <nav class="rail" aria-label="Repositories">
-      <div class="brand">taskdeck</div>
+      <div class="brand">taskdeck
+        <button id="open-settings" class="gear" type="button" title="Settings" aria-label="Settings"></button>
+      </div>
       <ul id="repos" class="repo-list"></ul>
       <form id="add-repo" class="add-repo">
         <label for="add-path">Add a repo</label>
-        <input id="add-path" placeholder="C:\code\my-app" autocomplete="off" required>
-        <input id="add-contract" placeholder="contract file (optional)" autocomplete="off">
+        <div class="pick"><input id="add-path" placeholder="C:\code\my-app" autocomplete="off" required><button id="browse-path" type="button">Browse</button></div>
+        <div class="pick"><input id="add-contract" placeholder="contract file (optional)" autocomplete="off"><button id="browse-contract" type="button">Browse</button></div>
         <button type="submit">Add</button>
         <p id="add-error" class="error" hidden></p>
       </form>
@@ -37,6 +40,7 @@
       <div id="dock-handle" class="dock-handle" role="separator" tabindex="0" aria-label="Resize terminal"></div>
       <section id="dock" class="dock" aria-label="Terminals">
         <div class="dock-bar">
+          <div id="dock-owner" class="dock-owner"></div>
           <div id="dock-tabs" class="dock-tabs" role="tablist"></div>
           <div id="dock-status" class="dock-status"></div>
           <div class="dock-tools">
@@ -49,6 +53,20 @@
       </section>
     </div>
   </div>
+  <dialog id="settings" class="sheet" aria-labelledby="settings-title">
+    <form method="dialog" class="sheet-head"><h2 id="settings-title">Settings</h2><button class="close" aria-label="Close">Close</button></form>
+    <h3>Theme</h3>
+    <div id="themes" class="themes" role="radiogroup" aria-label="Theme"></div>
+  </dialog>
+  <dialog id="picker" class="sheet picker" aria-labelledby="picker-title">
+    <form method="dialog" class="sheet-head"><h2 id="picker-title">Choose a folder</h2><button class="close" aria-label="Close">Close</button></form>
+    <div class="picker-nav">
+      <div id="picker-roots" class="picker-roots"></div>
+      <form id="picker-go" class="picker-go"><input id="picker-path" aria-label="Folder path" autocomplete="off"><button type="submit">Go</button></form>
+    </div>
+    <ul id="picker-list" class="picker-list"></ul>
+    <div class="picker-foot"><span id="picker-hint"></span><button id="picker-use" type="button" class="primary">Use this folder</button></div>
+  </dialog>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script type="module" src="/app.js"></script>

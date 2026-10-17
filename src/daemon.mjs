@@ -3,7 +3,8 @@
 // web page you happen to visit can't drive it, and the Host check blocks DNS rebinding.
 import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -107,7 +108,11 @@ async function handle(req, res, token, port) {
     return send(res, ...openFile(r, body.file));
   }
 
+  // ---- folder picker ----
+  if (path === '/api/fs') return send(res, 200, listDir(url.searchParams.get('path'), url.searchParams.has('files')));
+
   // ---- runs ----
+  if (path === '/api/runs' && url.searchParams.has('live')) return send(res, 200, liveRuns().map((r) => ({ id: r.id, repoId: r.repoId, title: r.title })));
   if (path === '/api/runs') return send(res, 200, listRuns({ repoId: url.searchParams.get('repo'), limit: Number(url.searchParams.get('limit') ?? 50) }));
   if ((p = m(/^\/api\/runs\/([\w-]+)$/))) {
     const run = getRun(p[1]);
@@ -321,6 +326,27 @@ const VENDOR = {
   '/vendor/xterm.css': () => join(dirname(require.resolve('@xterm/xterm/lib/xterm.js')), '../css/xterm.css'),
   '/vendor/addon-fit.js': () => require.resolve('@xterm/addon-fit/lib/addon-fit.js'),
 };
+
+// The browser can't hand us a real folder path, so the UI browses through the daemon.
+// `files`: also list contract-looking files, for picking a contract that lives elsewhere.
+function listDir(dir, files) {
+  const roots = process.platform === 'win32'
+    ? [...'CDEFGHIJKLMNOPQRSTUVWXYZ'].map((l) => `${l}:\\`).filter((d) => existsSync(d))
+    : ['/'];
+  const at = resolve(dir || homedir());
+  let entries = [];
+  try {
+    entries = readdirSync(at, { withFileTypes: true });
+  } catch (e) {
+    return { path: at, parent: dirname(at) === at ? null : dirname(at), roots, home: homedir(), error: e.code === 'EPERM' || e.code === 'EACCES' ? 'No permission to open this folder' : e.message, dirs: [], files: [] };
+  }
+  const has = (d, name) => existsSync(join(at, d, name));
+  const dirs = entries.filter((e) => e.isDirectory() && !['.git', 'node_modules', '$RECYCLE.BIN', 'System Volume Information'].includes(e.name))
+    .map((e) => ({ name: e.name, contract: has(e.name, FILE), git: has(e.name, '.git') }))
+    .sort((a, b) => a.name.startsWith('.') - b.name.startsWith('.') || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const yaml = files ? entries.filter((e) => e.isFile() && /\.ya?ml$/i.test(e.name)).map((e) => e.name).sort() : [];
+  return { path: at, parent: dirname(at) === at ? null : dirname(at), roots, home: homedir(), contract: existsSync(join(at, FILE)), dirs, files: yaml };
+}
 
 function serveStatic(res, path) {
   const file = VENDOR[path] ? VENDOR[path]() : resolve(UI_DIR, `.${path === '/' ? '/index.html' : path}`);

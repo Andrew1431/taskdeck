@@ -68,6 +68,7 @@ const state = {
   repo: null,
   proposals: [],
   runs: [],
+  live: [], // running runs across every entry, for the rail
   selected: null, // { type: 'action'|'workflow'|'run', id, values?, proposalId? }
   doneSteps: {},
 };
@@ -107,6 +108,7 @@ async function removeRepo(d) {
     r = await api('DELETE', `/api/repos/${d.id}`, { force: true });
   }
   if (!r.ok) return alert(r.data.error);
+  for (const t of repoTabs(d.id)) closeTab(t.run.id);
   state.repoId = state.repo = state.selected = null;
   localStorage.removeItem('taskdeck-repo');
   await loadRepos();
@@ -129,12 +131,13 @@ async function selectRepo(id) {
   renderRail();
   renderRepo();
   renderPanel();
+  showRepoTabs();
 }
 
 async function refreshActivity(force) {
-  const [p, runs] = await Promise.all([api('GET', '/api/proposals'), state.repoId ? api('GET', `/api/runs?repo=${state.repoId}&limit=12`) : { ok: false }]);
-  const next = { proposals: p.ok ? p.data : [], runs: runs.ok ? runs.data : [] };
-  const changed = JSON.stringify(next) !== JSON.stringify({ proposals: state.proposals, runs: state.runs });
+  const [p, runs, live] = await Promise.all([api('GET', '/api/proposals'), state.repoId ? api('GET', `/api/runs?repo=${state.repoId}&limit=12`) : { ok: false }, api('GET', '/api/runs?live=1')]);
+  const next = { proposals: p.ok ? p.data : [], runs: runs.ok ? runs.data : [], live: live.ok ? live.data : [] };
+  const changed = JSON.stringify(next) !== JSON.stringify({ proposals: state.proposals, runs: state.runs, live: state.live });
   Object.assign(state, next);
   if (changed && !force) {
     renderRail();
@@ -145,10 +148,12 @@ async function refreshActivity(force) {
 // ---------- rail ----------
 function renderRail() {
   const pendingBy = Map.groupBy(state.proposals, (p) => p.repoId);
+  const liveBy = Map.groupBy(state.live, (x) => x.repoId);
   fill($('repos'), ...state.repos.map((r) => {
     const waiting = pendingBy.get(r.id)?.length;
+    const running = liveBy.get(r.id) ?? [];
     return h('li', {}, h('button', { 'aria-current': r.id === state.repoId ? 'true' : 'false', onclick: () => selectRepo(r.id) },
-      h('span', {}, r.name),
+      h('span', { class: 'name' }, r.name, running.length > 0 && h('span', { class: 'dot running', title: `Running: ${running.map((x) => x.title).join(', ')}` })),
       r.errors.length ? h('span', { class: 'count bad', title: r.errors.join('\n') }, '!')
         : waiting ? h('span', { class: 'tag run', title: `${waiting} waiting for you` }, waiting)
         : h('span', { class: 'count' }, r.actionCount)));
@@ -346,9 +351,10 @@ function clean(values) {
 
 // ---------- terminal dock ----------
 // Terminals live in a dock below (or beside) the actions, one tab per run, so opening
-// another action never takes away the output you were watching.
+// another action never takes away the output you were watching. Each rail entry has its
+// own set of tabs; switching entries swaps them, and runs elsewhere keep going.
 const MAX_TABS = 10;
-const dock = { tabs: new Map(), active: null, prefs: { pos: 'bottom', height: 340, width: 620, collapsed: false, max: false } };
+const dock = { tabs: new Map(), active: null, activeBy: {}, prefs: { pos: 'bottom', height: 340, width: 620, collapsed: false, max: false } };
 try {
   Object.assign(dock.prefs, JSON.parse(localStorage.getItem('taskdeck-dock') ?? '{}'));
 } catch {}
@@ -357,7 +363,8 @@ const savePrefs = () => {
     localStorage.setItem('taskdeck-dock', JSON.stringify(dock.prefs));
   } catch {}
 };
-const saveTabs = () => sessionStorage.setItem('taskdeck-tabs', JSON.stringify({ ids: [...dock.tabs.keys()], active: dock.active }));
+const saveTabs = () => sessionStorage.setItem('taskdeck-tabs', JSON.stringify({ ids: [...dock.tabs.keys()], activeBy: dock.activeBy }));
+const repoTabs = (repoId = state.repoId) => [...dock.tabs.values()].filter((t) => t.run.repoId === repoId);
 
 const ICONS = {
   bottom: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 11h14"/>',
@@ -367,6 +374,7 @@ const ICONS = {
   down: '<path d="m5 8 5 5 5-5"/>',
   up: '<path d="m5 12 5-5 5 5"/>',
   close: '<path d="m6 6 8 8M14 6l-8 8"/>',
+  gear: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
 };
 function icon(name) {
   const s = h('span', { class: 'icon', 'aria-hidden': 'true' });
@@ -377,7 +385,7 @@ function icon(name) {
 function applyDock() {
   const p = dock.prefs;
   const work = $('work');
-  work.classList.toggle('has-dock', dock.tabs.size > 0);
+  work.classList.toggle('has-dock', repoTabs().length > 0);
   work.classList.toggle('dock-right', p.pos === 'right');
   work.classList.toggle('dock-collapsed', p.collapsed);
   work.classList.toggle('dock-max', p.max);
@@ -415,7 +423,7 @@ $('dock-max').addEventListener('click', () => {
 $('dock-collapse').addEventListener('click', () => setCollapsed(!dock.prefs.collapsed));
 // Capture phase, so it works while xterm has focus too.
 window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key === '`' && dock.tabs.size) {
+  if (e.ctrlKey && e.key === '`' && repoTabs().length) {
     e.preventDefault();
     setCollapsed(!dock.prefs.collapsed);
   }
@@ -453,23 +461,29 @@ handle.addEventListener('keydown', (e) => {
 });
 applyDock();
 
-function openRun(run, { focus = false } = {}) {
+// `show: false` adds the tab without switching to it (restoring other entries' tabs).
+function openRun(run, { focus = false, show = true } = {}) {
   if (!dock.tabs.has(run.id)) {
     const t = createTab(run);
     dock.tabs.set(run.id, t);
+    t.tab.hidden = t.pane.hidden = true;
     $('dock-tabs').append(t.tab);
     $('dock-panes').append(t.pane);
-    const finished = [...dock.tabs.values()].filter((x) => x !== t && x.run.status !== 'running');
-    while (dock.tabs.size > MAX_TABS && finished.length) closeTab(finished.shift().run.id);
+    const finished = repoTabs(run.repoId).filter((x) => x !== t && x.run.status !== 'running');
+    while (repoTabs(run.repoId).length > MAX_TABS && finished.length) closeTab(finished.shift().run.id);
   }
+  if (!show) return;
   dock.prefs.collapsed = false;
   activateTab(run.id, focus);
 }
 
 function activateTab(id, focus) {
+  const repoId = dock.tabs.get(id)?.run.repoId;
   dock.active = id;
+  if (repoId) dock.activeBy[repoId] = id;
   for (const [tid, t] of dock.tabs) {
     const on = tid === id;
+    t.tab.hidden = t.run.repoId !== repoId;
     t.pane.hidden = !on;
     t.tab.classList.toggle('active', on);
     t.label.setAttribute('aria-selected', String(on));
@@ -482,6 +496,18 @@ function activateTab(id, focus) {
   if (focus) t?.focus();
 }
 
+// Swap the dock to the selected entry's terminals.
+function showRepoTabs() {
+  const mine = repoTabs();
+  const want = dock.activeBy[state.repoId];
+  const id = mine.some((t) => t.run.id === want) ? want : mine.at(-1)?.run.id;
+  if (id) return activateTab(id);
+  dock.active = null;
+  for (const t of dock.tabs.values()) t.tab.hidden = t.pane.hidden = true;
+  applyDock();
+  renderDockStatus();
+}
+
 function closeTab(id) {
   const t = dock.tabs.get(id);
   if (!t) return;
@@ -489,15 +515,17 @@ function closeTab(id) {
   t.tab.remove();
   t.pane.remove();
   dock.tabs.delete(id);
-  if (dock.active === id) dock.active = null;
-  const last = [...dock.tabs.keys()].at(-1);
-  if (!dock.active && last) return activateTab(last);
+  if (dock.activeBy[t.run.repoId] === id) delete dock.activeBy[t.run.repoId];
+  if (dock.active === id) {
+    dock.active = null;
+    if (t.run.repoId === state.repoId) return showRepoTabs();
+  }
   applyDock();
-  renderDockStatus();
   saveTabs();
 }
 
 function renderDockStatus() {
+  fill($('dock-owner'), state.repo?.name ?? '');
   const r = dock.tabs.get(dock.active)?.run;
   if (!r) return fill($('dock-status'));
   const running = r.status === 'running';
@@ -516,14 +544,15 @@ async function restoreTabs() {
   } catch {}
   if (!saved?.ids?.length) return;
   const runs = await Promise.all(saved.ids.map((id) => api('GET', `/api/runs/${id}`)));
-  for (const r of runs) if (r.ok) openRun(r.data);
-  if (dock.tabs.has(saved.active)) activateTab(saved.active);
+  for (const r of runs) if (r.ok) openRun(r.data, { show: false });
+  Object.assign(dock.activeBy, saved.activeBy);
+  showRepoTabs();
 }
 
 function termTheme() {
   const css = getComputedStyle(document.documentElement);
   const v = (n) => css.getPropertyValue(n).trim();
-  return { background: v('--term'), foreground: v('--term-ink'), cursor: v('--term-ink'), selectionBackground: '#3a4f7a' };
+  return { background: v('--term'), foreground: v('--term-ink'), cursor: v('--term-ink'), selectionBackground: v('--term-sel') };
 }
 
 // The size a new run should start at, so its first lines aren't wrapped for a narrower terminal.
@@ -607,6 +636,7 @@ function createTab(run) {
     term.options.cursorBlink = false;
     refreshActivity();
   });
+  t.retheme = () => (term.options.theme = termTheme());
   t.dispose = () => {
     es.close();
     ro.disconnect();
@@ -658,3 +688,99 @@ function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
+
+// ---------- settings: themes ----------
+// Each theme is a [data-theme] block in style.css; "system" follows the OS light/dark setting.
+const THEMES = [
+  ['system', 'System'], ['light', 'Light'], ['dark', 'Dark'],
+  ['solarized-light', 'Solarized Light'], ['solarized-dark', 'Solarized Dark'],
+  ['gruvbox-light', 'Gruvbox Light'], ['gruvbox-dark', 'Gruvbox Dark'],
+  ['catppuccin-latte', 'Catppuccin Latte'], ['catppuccin-mocha', 'Catppuccin Mocha'],
+  ['nord', 'Nord'], ['dracula', 'Dracula'], ['tokyo-night', 'Tokyo Night'],
+  ['one-dark', 'One Dark'], ['rose-pine', 'Rosé Pine'], ['monokai', 'Monokai'],
+];
+const currentTheme = () => document.documentElement.dataset.theme ?? 'system';
+
+function setTheme(id) {
+  if (id === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = id;
+  try {
+    id === 'system' ? localStorage.removeItem('taskdeck-theme') : localStorage.setItem('taskdeck-theme', id);
+  } catch {}
+  for (const t of dock.tabs.values()) t.retheme();
+  renderThemes();
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => currentTheme() === 'system' && setTheme('system'));
+
+function renderThemes() {
+  const now = currentTheme();
+  fill($('themes'), THEMES.map(([id, name]) => {
+    // A swatch is a miniature of the app in that theme: rail, panel, accent, terminal.
+    const mini = (theme) => h('span', { class: 'mini', 'data-theme': theme },
+      h('span', { class: 'mini-rail' }), h('span', { class: 'mini-main' }, h('span', { class: 'mini-accent' }), h('span', { class: 'mini-line' })), h('span', { class: 'mini-term' }));
+    return h('button', { type: 'button', role: 'radio', class: 'theme', 'aria-checked': String(id === now), onclick: () => setTheme(id) },
+      id === 'system' ? h('span', { class: 'mini-split' }, mini('light'), mini('dark')) : mini(id),
+      h('span', { class: 'theme-name' }, name));
+  }));
+}
+
+$('open-settings').append(icon('gear'));
+$('open-settings').addEventListener('click', () => {
+  renderThemes();
+  $('settings').showModal();
+});
+
+// ---------- folder picker ----------
+// Browsers can't give a page a real folder path, so the daemon lists folders for us.
+const picker = { mode: 'folder', path: null, onPick: null };
+
+function openPicker(mode, start, onPick) {
+  Object.assign(picker, { mode, onPick });
+  $('picker-title').textContent = mode === 'folder' ? 'Choose a folder' : 'Choose a contract file';
+  $('picker-use').hidden = mode !== 'folder';
+  browse(start);
+  $('picker').showModal();
+}
+
+async function browse(path) {
+  const r = await api('GET', `/api/fs?${new URLSearchParams({ ...(path ? { path } : {}), ...(picker.mode === 'file' ? { files: '1' } : {}) })}`);
+  if (!r.ok) return;
+  const d = r.data;
+  picker.path = d.path;
+  $('picker-path').value = d.path;
+  fill($('picker-roots'),
+    h('button', { type: 'button', onclick: () => browse(d.home) }, 'Home'),
+    d.roots.length > 1 && d.roots.map((x) => h('button', { type: 'button', onclick: () => browse(x) }, x.replace(/\\$/, ''))));
+  const sep = d.path.includes('\\') ? '\\' : '/';
+  const join = (name) => `${d.path.replace(/[\\/]$/, '')}${sep}${name}`;
+  fill($('picker-list'),
+    d.parent && h('li', {}, h('button', { type: 'button', onclick: () => browse(d.parent) }, h('span', { class: 'fname' }, '..'), h('span', { class: 'fmeta' }, 'Up one folder'))),
+    d.error && h('li', { class: 'error' }, d.error),
+    d.dirs.map((x) => h('li', {}, h('button', { type: 'button', class: x.name.startsWith('.') ? 'dim' : '', onclick: () => browse(join(x.name)), ondblclick: () => picker.mode === 'folder' && use(join(x.name)) },
+      h('span', { class: 'fname' }, x.name),
+      h('span', { class: 'fmeta' }, x.contract && h('span', { class: 'tag ok' }, 'taskdeck.yaml'), x.git && h('span', { class: 'tag' }, 'git'))))),
+    d.files.map((f) => h('li', {}, h('button', { type: 'button', class: 'file', onclick: () => use(join(f)) }, h('span', { class: 'fname' }, f), h('span', { class: 'fmeta' }, 'Choose')))),
+    !d.error && !d.dirs.length && !d.files.length && h('li', { class: 'none' }, picker.mode === 'file' ? 'No folders or YAML files here.' : 'No folders here.'));
+  $('picker-hint').textContent = picker.mode === 'folder' ? (d.contract ? 'Has a taskdeck.yaml.' : 'No taskdeck.yaml here; add one with --contract or ask your agent to write it.') : '';
+  $('picker-list').scrollTop = 0;
+}
+
+function use(path) {
+  $('picker').close();
+  picker.onPick(path);
+}
+
+$('picker-use').addEventListener('click', () => use(picker.path));
+$('picker-go').addEventListener('submit', (e) => {
+  e.preventDefault();
+  browse($('picker-path').value.trim());
+});
+// Start next to the entry you're looking at: worktrees usually sit beside each other.
+const pickerStart = (input) => input.value.trim() || (state.repo ? state.repo.path.replace(/[\\/][^\\/]+[\\/]?$/, '') : '');
+$('browse-path').addEventListener('click', () => openPicker('folder', pickerStart($('add-path')), (p) => {
+  $('add-path').value = p;
+  $('add-repo').querySelector('[type=submit]').focus();
+}));
+$('browse-contract').addEventListener('click', () => openPicker('file', $('add-contract').value.trim().replace(/[\\/][^\\/]+\.ya?ml$/i, '') || pickerStart($('add-path')), (p) => {
+  $('add-contract').value = p;
+}));
