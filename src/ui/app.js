@@ -90,6 +90,16 @@ if (!TOKEN) {
     if (p) review(p);
   });
   setInterval(refreshActivity, 3000);
+  setInterval(watchDaemon, 5000);
+}
+
+// A newer client restarts the daemon on its new version; reload so this page runs the matching UI.
+let daemonVersion;
+async function watchDaemon() {
+  const r = await api('GET', '/api/health').catch(() => ({ ok: false }));
+  if (!r.ok) return;
+  daemonVersion ??= r.data.version;
+  if (r.data.version !== daemonVersion) location.reload();
 }
 
 $('add-repo').addEventListener('submit', async (e) => {

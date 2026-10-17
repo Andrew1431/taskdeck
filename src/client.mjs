@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DAEMON_FILE } from './home.mjs';
+import { VERSION, newer } from './version.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), 'cli.mjs');
 
@@ -48,7 +49,9 @@ export async function stopDaemon(force) {
 
 export async function ensureDaemon() {
   let d = info();
-  if (d && (await healthy(d))) return d;
+  const h = d && (await healthy(d));
+  // An older daemon (e.g. npx just fetched a new release) is swapped out, but never mid-run.
+  if (h && !(newer(VERSION, h.version) && h.running === 0 && (await stopDaemon(false))?.status === 200)) return d;
   spawn(process.execPath, [CLI, 'daemon'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 100));

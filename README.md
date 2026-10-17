@@ -1,52 +1,78 @@
 # taskdeck
 
+A task runner built for working with coding agents. Like a Makefile or justfile, each repo
+gets one file, `taskdeck.yaml`, listing the commands people run in it. You run them from
+the CLI or a local UI, and your agent runs them over MCP.
+
 Every repo grows commands you forget: `pnpm run deploy worker --skip-build`,
-`.\launch-two.ps1 -Count 3 -Manual`, "edit tfvars, then apply, then deploy". Your AI
-assistant tells you once, and it's gone by the time you open a terminal.
+`.\launch-two.ps1 -Count 3 -Manual`, "edit tfvars, then apply, then deploy". make and just
+gave those commands a name. taskdeck also tells you, and your agent, how to run each one
+and how risky it is:
 
-taskdeck gives each repo one `taskdeck.yaml` listing those commands: documented, typed
-and marked by risk. It doesn't matter whether they're npm scripts, PowerShell, make or
-your own CLI. You (or your agent) run them from one place.
+- **Typed params.** Every action is a form in the UI and a schema for agents, so nobody
+  guesses flags.
+- **Risk levels.** Your agent runs the safe actions itself. A deploy or a delete becomes a
+  proposal with a Run button for you, not a command in chat that you forget by tomorrow.
+- **Nothing to rewrite.** Actions call what you already have: npm scripts, PowerShell, make,
+  or your own CLI.
+- **Somewhere to watch them.** Each repo gets real terminals, run history and multi-step
+  workflows shown as checklists, all kept by one small local daemon.
 
-## Set up a repo: point your agent at this file
+## Get started
 
-Tell your coding agent (Claude Code, Copilot, Cursor...):
+Add taskdeck to your agent once. In Claude Code:
 
-> Read https://github.com/Andrew1431/taskdeck/blob/main/AGENT_SETUP.md and set up taskdeck for this repo.
+```bash
+claude mcp add taskdeck --scope user -- npx -y taskdeck@latest mcp
+```
 
-It discovers the commands, reads your docs, writes `taskdeck.yaml` and checks it.
+In Windows PowerShell, quote the `--` and run it through `cmd /c`:
 
-## Use it
+```powershell
+claude mcp add taskdeck --scope user '--' cmd /c npx -y taskdeck@latest mcp
+```
 
-Open the UI. It starts a small background daemon on `127.0.0.1`, adds the current repo and
-opens in its own window (Chrome, Edge or Brave app mode; `--browser` for a normal tab):
+Other MCP clients (Cursor, VS Code, Windsurf...) take the same command in their MCP config:
+`"command": "npx", "args": ["-y", "taskdeck@latest", "mcp"]`.
+
+Then open a new chat in any repo and say:
+
+> set up taskdeck
+
+In Claude Code, `/mcp__taskdeck__setup` does the same. The agent finds the repo's commands,
+reads its docs, writes `taskdeck.yaml` and checks it. If your agent has no MCP, ask it to
+read [AGENT_SETUP.md](AGENT_SETUP.md) and do what it says.
+
+After that, the agent checks taskdeck before it tells you to run anything. It runs what the
+contract allows (`agent: run`) and proposes the rest. If no taskdeck window is open, one
+opens on the proposal (set `TASKDECK_POPUP=0` in the daemon's environment to turn that off).
+An open window brings the proposal up for review, and runs the agent starts show up in its
+terminal dock.
+
+## The UI
 
 ```bash
 npx taskdeck ui
 ```
 
-Every action is a form: fill in the blanks, watch the exact command update, press Run and
-watch it in a real terminal (colors, progress bars, prompts you can type into), or send it
-to your own terminal with "Open in my terminal". Runs keep going if you close the tab.
-(Real terminals come from the optional `node-pty` dependency, prebuilt for Windows and macOS;
-on Linux it needs build tools, and without it output is piped.) High-risk actions ask you to confirm. Workflows are checklists. Things
-your agent suggested wait under "Waiting for you" until you run or dismiss them. Each repo
-keeps its own terminal tabs, and the left bar marks repos with something running. Add repos
-with Browse; pick one of 14 themes from the gear icon.
+This command starts the daemon if it isn't running and adds the current repo. It opens in
+its own window (Chrome, Edge or Brave app mode); `--browser` opens a normal tab instead.
 
-Give your agent the same deck over MCP (Claude Code shown; any MCP client works):
+- **Run actions.** Fill in the form and the exact command updates as you type. Press Run to
+  watch it in a real terminal, with colors, progress bars and prompts you can type into.
+  "Open in my terminal" sends it to your own terminal instead.
+- **Keep going after you close the tab.** Runs carry on in the daemon. High-risk actions ask
+  you to confirm first.
+- **Review proposals.** Proposals from your agent wait under "Waiting for you" until you run
+  or dismiss them.
+- **Switch between repos.** Each repo keeps its own terminal tabs, and the left bar marks the
+  ones with something running. Add repos with Browse, and pick one of 14 themes from the
+  gear icon.
 
-```bash
-claude mcp add taskdeck --scope user -- npx -y taskdeck mcp
-```
+Real terminals come from the optional `node-pty` dependency, prebuilt for Windows and macOS.
+On Linux it needs build tools; without it, output is piped instead.
 
-The agent can then list and describe actions and run the ones the contract allows
-(`agent: run`). Anything risky becomes a proposal in your UI instead of a command in chat
-that you'll have forgotten by tomorrow. If no taskdeck window is open, one opens on the
-proposal (`TASKDECK_POPUP=0` in the daemon's environment turns that off); an open window
-brings it up for review, and runs the agent starts appear in the terminal dock.
-
-From a terminal:
+## The CLI
 
 ```bash
 npx taskdeck list
@@ -64,10 +90,11 @@ npx taskdeck run deploy target=worker skipBuild --dry-run
 npx taskdeck check
 ```
 
-`check` validates the contract and lists commands in the repo the contract doesn't cover yet.
+`check` validates the contract and lists commands in the repo that the contract doesn't
+cover yet.
 
-Repos can be added and removed from scripts, e.g. when spinning worktrees up and down. The
-contract can live outside the repo (action `cwd`s resolve from the repo root you pass):
+Scripts can add and remove repos, e.g. when creating and deleting worktrees. The contract can
+live outside the repo; action `cwd`s resolve from the repo root you pass:
 
 ```bash
 npx taskdeck add ../feat-login --contract ../feat-login.taskdeck.yaml
@@ -77,10 +104,15 @@ npx taskdeck add ../feat-login --contract ../feat-login.taskdeck.yaml
 npx taskdeck remove ../feat-login
 ```
 
-`remove` only takes it out of the UI; files stay put. Agents have the same pair over MCP.
+`remove` only takes the repo out of the UI and leaves its files alone. Agents have the same
+pair of commands over MCP.
 
-The daemon is one idle Node process (about 60 MB, no CPU while nothing runs). It doesn't
-start at login. Check on it or stop it with:
+## The daemon
+
+The daemon is one Node process that uses about 60 MB and no CPU while nothing runs. It
+doesn't start at login: the UI, the CLI or the MCP server starts it when one of them needs it.
+When a newer taskdeck connects (`@latest` picks up releases), it restarts the daemon on the
+new version once no runs are going, and open UI windows reload themselves.
 
 ```bash
 npx taskdeck status
@@ -95,14 +127,14 @@ history stay in `~/.taskdeck` either way.
 
 ## Status
 
-Early prototype. Today: the contract format ([CONTRACT.md](CONTRACT.md)), discovery
-helpers for npm-family scripts and PowerShell, the CLI, the local web UI and the MCP
-server. See [examples/](examples/) for real contracts and [ROADMAP.md](ROADMAP.md) for
-what might come next.
+Early, but in daily use. Today taskdeck has the contract format ([CONTRACT.md](CONTRACT.md)),
+discovery helpers for npm-family scripts and PowerShell, the CLI, the local UI and the MCP
+server. See [examples/](examples/) for real contracts and [ROADMAP.md](ROADMAP.md) for what
+might come next.
 
-State lives in `~/.taskdeck` (repos, run logs, proposals; `TASKDECK_HOME` overrides it).
-The daemon only listens on 127.0.0.1 and every API call needs the token in
-`~/.taskdeck/daemon.json`, so web pages you visit can't drive it.
+State lives in `~/.taskdeck`: repos, run logs and proposals (`TASKDECK_HOME` moves it). The
+daemon only listens on 127.0.0.1, and every API call needs the key in `~/.taskdeck`, so web
+pages you visit can't drive it.
 
 ## License
 

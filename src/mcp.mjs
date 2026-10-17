@@ -1,19 +1,28 @@
 // MCP server over stdio (newline-delimited JSON-RPC). Thin: every tool is a daemon API call,
 // so the agent and the UI see the same runs and proposals.
 import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { api } from './client.mjs';
 import { FILE } from './contract.mjs';
+import { VERSION } from './version.mjs';
 
 const INSTRUCTIONS = `taskdeck holds this repo's commands (taskdeck.yaml): documented, typed, with risk levels.
 - Before telling the user to run a command, check taskdeck_list. If the command is there, don't print it for them to copy:
   run it with taskdeck_run when its policy allows, otherwise queue it with taskdeck_propose and a one-line reason.
   Proposals wait in the user's taskdeck UI with a Run button, so they survive after this chat.
 - If a command the user needs isn't in the contract, say so and suggest adding it to taskdeck.yaml.
-- Never put secret values in params; secrets come from the user's environment.`;
+- Never put secret values in params; secrets come from the user's environment.
+- When the project has no taskdeck.yaml yet and the user asks to set up taskdeck (or keeps needing its commands), call taskdeck_setup_guide and follow it.`;
+
+const PKG = new URL('..', import.meta.url);
 
 const TOOLS = [
+  {
+    name: 'taskdeck_setup_guide',
+    description: 'How to write a taskdeck.yaml for a repo: the setup steps and the contract format. Use when setting up taskdeck in a project that has none.',
+    inputSchema: { type: 'object', properties: {} },
+  },
   {
     name: 'taskdeck_list',
     description: "List the repo's actions, workflows and config files from taskdeck.yaml, with each action's risk and whether an agent may run it.",
@@ -97,14 +106,20 @@ async function dispatch(method, params) {
     case 'initialize':
       return {
         protocolVersion: params.protocolVersion ?? '2025-06-18',
-        capabilities: { tools: {} },
-        serverInfo: { name: 'taskdeck', version: '0.0.1' },
+        capabilities: { tools: {}, prompts: {} },
+        serverInfo: { name: 'taskdeck', version: VERSION },
         instructions: INSTRUCTIONS,
       };
     case 'ping':
       return {};
     case 'tools/list':
       return { tools: TOOLS };
+    // Shows up as a slash command in clients that support prompts (/mcp__taskdeck__setup in Claude Code).
+    case 'prompts/list':
+      return { prompts: [{ name: 'setup', description: 'Set up taskdeck for this repo: find its commands and write taskdeck.yaml' }] };
+    case 'prompts/get':
+      if (params.name !== 'setup') throw Object.assign(new Error(`unknown prompt ${params.name}`), { code: -32602 });
+      return { messages: [{ role: 'user', content: { type: 'text', text: 'Set up taskdeck for this repo: call taskdeck_setup_guide and follow it, then add the repo with taskdeck_add.' } }] };
     case 'tools/call':
       try {
         return { content: [{ type: 'text', text: await callTool(params.name, params.arguments ?? {}) }] };
@@ -118,6 +133,10 @@ async function dispatch(method, params) {
 
 async function callTool(name, args) {
   switch (name) {
+    case 'taskdeck_setup_guide': {
+      const read = (f) => readFileSync(new URL(f, PKG), 'utf8');
+      return `${read('AGENT_SETUP.md')}\n\n---\n\n${read('CONTRACT.md')}\n\n---\nWhere these docs say \`taskdeck\`, run \`npx taskdeck\`. When the contract checks clean, add the repo with taskdeck_add.`;
+    }
     case 'taskdeck_list': {
       const repo = await resolveRepo(args.repo);
       const d = must(await api('GET', `/api/repos/${repo.id}`));
@@ -217,5 +236,5 @@ async function resolveRepo(arg) {
     if (up === dir) break;
     dir = up;
   }
-  throw new Error(`No taskdeck.yaml found for ${arg ?? process.cwd()}. Set one up by following AGENT_SETUP.md in the taskdeck package, or pass a repo id from: ${repos.map((r) => r.id).join(', ') || '(none registered)'}`);
+  throw new Error(`No taskdeck.yaml found for ${arg ?? process.cwd()}. Offer to set one up (taskdeck_setup_guide), or pass a repo id from: ${repos.map((r) => r.id).join(', ') || '(none registered)'}`);
 }

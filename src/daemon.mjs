@@ -12,6 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { load, buildInvocation, baseArgv, expandPath, FILE } from './contract.mjs';
 import { DAEMON_FILE, ensureHome, readState, writeState } from './home.mjs';
 import { openUi } from './open.mjs';
+import { VERSION } from './version.mjs';
 import { startRun, stopRun, subscribe, getRun, getLog, listRuns, markOrphans, openInTerminal, commandLine, cmdExeLine, writeInput, resizeRun, ptyAvailable, liveRuns } from './runner.mjs';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
@@ -22,10 +23,12 @@ let shutdown = () => process.exit(0);
 export async function startDaemon({ port = DEFAULT_PORT } = {}) {
   ensureHome();
   markOrphans();
-  const token = randomBytes(24).toString('hex');
+  // The token outlives the daemon, so open UI windows keep working when a newer client restarts it.
+  let token = readState('key', null)?.token;
+  if (!token) writeState('key', { token: (token = randomBytes(24).toString('hex')) });
   const server = createServer((req, res) => handle(req, res, token, server.address().port).catch((e) => send(res, 500, { error: e.message })));
   const actualPort = await listen(server, port);
-  writeFileSync(DAEMON_FILE, JSON.stringify({ port: actualPort, token, pid: process.pid, startedAt: Date.now() }, null, 2));
+  writeFileSync(DAEMON_FILE, JSON.stringify({ port: actualPort, token, pid: process.pid, version: VERSION, startedAt: Date.now() }, null, 2));
   const cleanup = (shutdown = () => {
     try {
       const d = JSON.parse(readFileSync(DAEMON_FILE, 'utf8'));
@@ -63,7 +66,7 @@ async function handle(req, res, token, port) {
   const m = (re) => path.match(re);
   let p;
 
-  if (path === '/api/health') return send(res, 200, { ok: true, pid: process.pid, pty: ptyAvailable(), uptime: Math.round(process.uptime()), running: liveRuns().length, rss: process.memoryUsage().rss });
+  if (path === '/api/health') return send(res, 200, { ok: true, pid: process.pid, version: VERSION, pty: ptyAvailable(), uptime: Math.round(process.uptime()), running: liveRuns().length, rss: process.memoryUsage().rss });
   if (path === '/api/shutdown' && req.method === 'POST') {
     const running = liveRuns();
     if (running.length && !body.force) return send(res, 409, { error: 'runs still going', running: running.map((r) => ({ id: r.id, title: r.title, repoId: r.repoId })) });

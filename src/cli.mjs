@@ -9,7 +9,7 @@ import { renderReport } from './report.mjs';
 import { api, uiUrl, daemonStatus, stopDaemon } from './client.mjs';
 import { openUi } from './open.mjs';
 
-const USAGE = `taskdeck — one contract for every command in a repo
+const USAGE = `taskdeck — a task runner for you and your coding agent
 
   taskdeck list                       actions in this repo's taskdeck.yaml
   taskdeck show <action>              docs, params and the exact command
@@ -216,7 +216,7 @@ async function status() {
   if (flags.json) return console.log(JSON.stringify(d));
   if (!d) return console.log('taskdeck daemon is not running');
   const mins = Math.round(d.uptime / 60);
-  console.log(`taskdeck daemon on http://127.0.0.1:${d.port} (pid ${d.pid}), up ${mins < 60 ? `${mins}m` : `${(mins / 60).toFixed(1)}h`}, ${Math.round(d.rss / 1048576)} MB, ${d.running} run(s) going`);
+  console.log(`taskdeck daemon ${d.version ?? '(pre-0.1.7)'} on http://127.0.0.1:${d.port} (pid ${d.pid}), up ${mins < 60 ? `${mins}m` : `${(mins / 60).toFixed(1)}h`}, ${Math.round(d.rss / 1048576)} MB, ${d.running} run(s) going`);
 }
 
 async function stop() {
