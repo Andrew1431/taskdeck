@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { load, buildInvocation, baseArgv, expandPath, FILE } from './contract.mjs';
 import { DAEMON_FILE, ensureHome, readState, writeState } from './home.mjs';
+import { openUi } from './open.mjs';
 import { startRun, stopRun, subscribe, getRun, getLog, listRuns, markOrphans, openInTerminal, commandLine, cmdExeLine, writeInput, resizeRun, ptyAvailable, liveRuns } from './runner.mjs';
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), 'ui');
@@ -56,6 +57,7 @@ async function handle(req, res, token, port) {
   if (!path.startsWith('/api/')) return serveStatic(res, path);
   const given = req.headers['x-taskdeck-token'] ?? url.searchParams.get('t');
   if (given !== token) return send(res, 401, { error: 'missing or wrong token; open the UI with `taskdeck ui`' });
+  if (req.headers['x-taskdeck-client'] === 'ui') ui.seen = Date.now();
 
   const body = req.method === 'POST' || req.method === 'DELETE' ? await readBody(req) : {};
   const m = (re) => path.match(re);
@@ -112,7 +114,7 @@ async function handle(req, res, token, port) {
   if (path === '/api/fs') return send(res, 200, listDir(url.searchParams.get('path'), url.searchParams.has('files')));
 
   // ---- runs ----
-  if (path === '/api/runs' && url.searchParams.has('live')) return send(res, 200, liveRuns().map((r) => ({ id: r.id, repoId: r.repoId, title: r.title })));
+  if (path === '/api/runs' && url.searchParams.has('live')) return send(res, 200, liveRuns().map((r) => ({ id: r.id, repoId: r.repoId, title: r.title, by: r.by })));
   if (path === '/api/runs') return send(res, 200, listRuns({ repoId: url.searchParams.get('repo'), limit: Number(url.searchParams.get('limit') ?? 50) }));
   if ((p = m(/^\/api\/runs\/([\w-]+)$/))) {
     const run = getRun(p[1]);
@@ -128,6 +130,7 @@ async function handle(req, res, token, port) {
   if (path === '/api/proposals' && req.method === 'GET') return send(res, 200, proposals().filter((x) => url.searchParams.get('all') || x.status === 'pending'));
   if (path === '/api/proposals' && req.method === 'POST') {
     const out = propose(body);
+    if (!out.status) out.body.ui = surfaceProposal(out.body, port, token);
     return send(res, out.status ?? 200, out.body);
   }
   if ((p = m(/^\/api\/proposals\/([\w-]+)\/(dismiss|ran)$/)) && req.method === 'POST') {
@@ -307,6 +310,19 @@ function propose({ repoId, actionId, values = {}, reason, by = 'agent' }) {
   const prop = { id: randomUUID().slice(0, 8), repoId, actionId, title: a.title, risk: a.risk, values, command, reason: reason ?? null, by, status: 'pending', createdAt: Date.now() };
   writeState('proposals', [...proposals(), prop].slice(-500));
   return { body: prop };
+}
+
+// An open UI polls every few seconds and picks the proposal up itself. With none open, a
+// proposal would sit unseen, so open a window on it (once per burst of proposals).
+// TASKDECK_POPUP=0 turns this off.
+const ui = { seen: 0, opened: 0 };
+function surfaceProposal(prop, port, token) {
+  const now = Date.now();
+  if (now - ui.seen < 8000) return 'open';
+  if (process.env.TASKDECK_POPUP === '0' || now - ui.opened < 30000) return 'queued';
+  ui.opened = now;
+  openUi(`http://127.0.0.1:${port}/#t=${token}&repo=${prop.repoId}&proposal=${prop.id}`);
+  return 'opened';
 }
 
 function closeProposal(id, runId) {

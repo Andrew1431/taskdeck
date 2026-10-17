@@ -165,7 +165,8 @@ async function callTool(name, args) {
     case 'taskdeck_propose': {
       const repo = await resolveRepo(args.repo);
       const p = must(await api('POST', '/api/proposals', { repoId: repo.id, actionId: args.action, values: args.values ?? {}, reason: args.reason, by: 'agent' }));
-      return `Queued for the user in the taskdeck UI (proposal ${p.id}): ${p.title}\nCommand: ${p.command}\nTell the user it's waiting there; don't ask them to copy the command.`;
+      const where = { open: 'It is showing in their open taskdeck window.', opened: 'A taskdeck window just opened on it.' }[p.ui] ?? 'It is waiting in the taskdeck UI (`npx taskdeck ui`).';
+      return `Queued for the user (proposal ${p.id}): ${p.title}\nCommand: ${p.command}\n${where} Tell the user; don't ask them to copy the command.`;
     }
     case 'taskdeck_run_status':
       return formatRun(must(await api('GET', `/api/runs/${encodeURIComponent(args.run_id)}?tail=${args.tail_chars ?? 4000}&plain`)));

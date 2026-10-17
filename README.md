@@ -42,7 +42,9 @@ claude mcp add taskdeck --scope user -- npx -y taskdeck mcp
 
 The agent can then list and describe actions and run the ones the contract allows
 (`agent: run`). Anything risky becomes a proposal in your UI instead of a command in chat
-that you'll have forgotten by tomorrow.
+that you'll have forgotten by tomorrow. If no taskdeck window is open, one opens on the
+proposal (`TASKDECK_POPUP=0` in the daemon's environment turns that off); an open window
+brings it up for review, and runs the agent starts appear in the terminal dock.
 
 From a terminal:
 

@@ -3,7 +3,10 @@
 window.addEventListener('unhandledrejection', (e) => console.error('taskdeck:', e.reason));
 
 // ---------- token + api ----------
-const hashToken = new URLSearchParams(location.hash.slice(1)).get('t');
+const hash = new URLSearchParams(location.hash.slice(1));
+const hashToken = hash.get('t');
+// A window the daemon opened for an agent's proposal lands on it.
+const landing = { repo: hash.get('repo'), proposal: hash.get('proposal') };
 if (hashToken) {
   sessionStorage.setItem('taskdeck-token', hashToken);
   history.replaceState(null, '', location.pathname);
@@ -15,7 +18,8 @@ window.addEventListener('hashchange', () => location.hash.includes('t=') && loca
 async function api(method, path, body) {
   const r = await fetch(path, {
     method,
-    headers: { 'x-taskdeck-token': TOKEN ?? '', 'content-type': 'application/json' },
+    // x-taskdeck-client tells the daemon a UI is open, so it doesn't pop up another window.
+    headers: { 'x-taskdeck-token': TOKEN ?? '', 'x-taskdeck-client': 'ui', 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({}));
@@ -72,13 +76,19 @@ const state = {
   selected: null, // { type: 'action'|'workflow'|'run', id, values?, proposalId? }
   doneSteps: {},
 };
+if (landing.repo) state.repoId = landing.repo;
 
 // ---------- boot ----------
 if (!TOKEN) {
   fill($('repo'), h('div', { class: 'empty' }, h('h1', {}, 'Open taskdeck from the terminal'),
     h('p', {}, 'This page needs the key the daemon gives out. Run ', h('code', {}, 'npx taskdeck ui'), ' and it opens here signed in.')));
 } else {
-  loadRepos().then(() => { restoreTabs(); if (state.repoId) selectRepo(state.repoId); });
+  loadRepos().then(async () => {
+    restoreTabs();
+    if (state.repoId) await selectRepo(state.repoId);
+    const p = landing.proposal && state.proposals.find((x) => x.id === landing.proposal);
+    if (p) review(p);
+  });
   setInterval(refreshActivity, 3000);
 }
 
@@ -139,15 +149,53 @@ async function refreshActivity(force) {
   const next = { proposals: p.ok ? p.data : [], runs: runs.ok ? runs.data : [], live: live.ok ? live.data : [] };
   const changed = JSON.stringify(next) !== JSON.stringify({ proposals: state.proposals, runs: state.runs, live: state.live });
   Object.assign(state, next);
+  noticeNew(next);
   if (changed && !force) {
     renderRail();
     renderActivity();
   }
 }
 
+// What agents (or the CLI) did since the last poll: their runs open in the dock, and a new
+// proposal opens for review unless you're in the middle of something else.
+const known = { proposals: null, runs: new Set() };
+function noticeNew({ proposals, live }) {
+  const first = !known.proposals;
+  const fresh = first ? [] : proposals.filter((p) => !known.proposals.has(p.id));
+  const freshRuns = live.filter((r) => !known.runs.has(r.id) && r.by !== 'ui');
+  known.proposals = new Set(proposals.map((p) => p.id));
+  for (const r of live) known.runs.add(r.id);
+  if (!first) {
+    for (const r of freshRuns) api('GET', `/api/runs/${r.id}`).then((x) => x.ok && !dock.tabs.has(r.id) && openRun(x.data, { show: x.data.repoId === state.repoId }));
+  }
+  if (fresh.length) surface(fresh.at(-1));
+}
+
+async function surface(p) {
+  const busy = !document.hidden && state.selected?.type === 'action' && !state.selected.proposalId;
+  if (busy) return toast(p);
+  if (p.repoId !== state.repoId) await selectRepo(p.repoId);
+  review(p);
+  window.focus();
+}
+
+const review = (p) => select({ type: 'action', id: p.actionId, values: p.values, proposalId: p.id, reason: p.reason });
+
+function toast(p) {
+  const repo = state.repos.find((r) => r.id === p.repoId)?.name;
+  const el = h('div', { class: 'toast', role: 'status' },
+    h('span', {}, h('strong', {}, 'Your agent suggested: '), p.title, repo && p.repoId !== state.repoId ? ` in ${repo}` : ''),
+    h('button', { class: 'btn', onclick: async () => { el.remove(); if (p.repoId !== state.repoId) await selectRepo(p.repoId); review(p); } }, 'Review'),
+    h('button', { class: 'link', onclick: () => el.remove() }, 'Later'));
+  document.querySelector('.toast')?.remove();
+  document.body.append(el);
+  setTimeout(() => el.remove(), 20000);
+}
+
 // ---------- rail ----------
 function renderRail() {
   const pendingBy = Map.groupBy(state.proposals, (p) => p.repoId);
+  document.title = state.proposals.length ? `(${state.proposals.length}) taskdeck` : 'taskdeck';
   const liveBy = Map.groupBy(state.live, (x) => x.repoId);
   fill($('repos'), ...state.repos.map((r) => {
     const waiting = pendingBy.get(r.id)?.length;
@@ -213,7 +261,7 @@ function renderActivity() {
         h('div', { class: 'why' }, p.reason ?? 'Suggested by your agent', ' · ', ago(p.createdAt)),
         h('code', {}, p.command),
         h('div', { class: 'acts' },
-          h('button', { class: 'btn', onclick: () => select({ type: 'action', id: p.actionId, values: p.values, proposalId: p.id, reason: p.reason }) }, 'Review'),
+          h('button', { class: 'btn', onclick: () => review(p) }, 'Review'),
           h('button', { class: 'link', onclick: async () => { await api('POST', `/api/proposals/${p.id}/dismiss`); refreshActivity(); } }, 'Dismiss'))))),
     state.runs.length > 0 && h('section', { class: 'group runs' }, h('h2', {}, 'Recent runs'),
       h('ul', { class: 'rows' }, state.runs.slice(0, 6).map((r) => h('li', { class: 'row', 'aria-current': isSel('run', r.id) ? 'true' : 'false' },
