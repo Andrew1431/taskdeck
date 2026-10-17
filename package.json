@@ -1,6 +1,6 @@
 {
   "name": "taskdeck",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "A taskdeck.yaml contract for the commands in your repo: run them from a local web UI, the CLI, or your AI agent over MCP.",
   "license": "Unlicense",
