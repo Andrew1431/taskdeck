@@ -20,15 +20,22 @@ and how risky it is:
 
 ## Get started
 
-Add taskdeck to your agents once:
+Add taskdeck to your agent once:
 
 ```bash
-npx taskdeck init
+npx taskdeck init --claude
 ```
 
-`init` adds taskdeck's MCP server to every client it finds on this machine: Claude Code,
-Cursor, VS Code and Windsurf. It uses the right command for your OS and skips clients that
-already have it. `--dry-run` shows what it would change. For any other MCP client, add the
+`init` adds taskdeck's MCP server to the client you name, using the right command for your
+OS:
+
+- `--claude` for Claude Code
+- `--copilot` (or `--vscode`) for GitHub Copilot in VS Code
+- `--cursor` for Cursor
+- `--windsurf` for Windsurf
+
+Name several clients, or pass `--all` for every one installed. With no flags, `init` asks
+about each client it finds. `--dry-run` shows what it would change. For any other MCP client, add the
 server yourself: `"command": "npx", "args": ["-y", "taskdeck@latest", "mcp"]` (on Windows,
 `"command": "cmd", "args": ["/c", "npx", "-y", "taskdeck@latest", "mcp"]`).
 
@@ -129,10 +136,13 @@ history stay in `~/.taskdeck` either way.
 npx taskdeck uninstall
 ```
 
-This command takes taskdeck out of every client `init` set up and stops the daemon. It
+This command takes taskdeck out of every client that has it and stops the daemon. It
 refuses while runs are going; `--force` stops them too. Your repo list and run history stay
 in `~/.taskdeck` unless you add `--purge`. It never touches the `taskdeck.yaml` files in
 your repos. If you also installed taskdeck globally, run `npm rm -g taskdeck`.
+
+To take taskdeck out of one client and leave the rest running, name it:
+`npx taskdeck uninstall --copilot`.
 
 ## Status
 

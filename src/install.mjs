@@ -1,5 +1,5 @@
-// `taskdeck init` / `taskdeck uninstall`: add or remove the taskdeck MCP server in each agent
-// client found on this machine, so nobody has to get the per-OS command line right by hand.
+// `taskdeck init` / `taskdeck uninstall`: add or remove the taskdeck MCP server in agent
+// clients, so nobody has to get the per-OS command line right by hand.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -17,23 +17,9 @@ function vscodeUserDir() {
   return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'Code', 'User');
 }
 
-// JSON-config clients: present when their config folder exists.
-const JSON_CLIENTS = [
-  { name: 'Cursor', dir: () => join(homedir(), '.cursor'), file: 'mcp.json', key: 'mcpServers', entry: COMMAND },
-  { name: 'VS Code', dir: vscodeUserDir, file: 'mcp.json', key: 'servers', entry: { type: 'stdio', ...COMMAND } },
-  { name: 'Windsurf', dir: () => join(homedir(), '.codeium', 'windsurf'), file: 'mcp_config.json', key: 'mcpServers', entry: COMMAND },
-];
-
 // claude is a .cmd shim on some Windows installs; every arg here is a plain word, so joining is safe.
 const claude = (args) => (WIN ? spawnSync(['claude', ...args].join(' '), { shell: true, encoding: 'utf8' }) : spawnSync('claude', args, { encoding: 'utf8' }));
-const claudeInstalled = () => claude(['--version']).status === 0;
-function claudeHas() {
-  try {
-    return !!JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8')).mcpServers?.taskdeck;
-  } catch {
-    return false;
-  }
-}
+const claudeResult = (r, ok) => (r.status === 0 ? ok : `failed: ${(r.stderr || r.stdout).trim()}`);
 
 function readJson(file) {
   const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
@@ -46,70 +32,90 @@ function writeJson(file, value) {
   renameSync(`${file}.tmp`, file);
 }
 
-// One line per client: what happened, or what to do by hand.
-export function init({ dryRun } = {}) {
-  const out = [];
-  if (!claudeInstalled()) out.push('· Claude Code: not found');
-  else if (claudeHas()) out.push('✓ Claude Code: already set up');
-  else if (dryRun) out.push('→ Claude Code: would run claude mcp add taskdeck --scope user');
-  else {
-    const r = claude(['mcp', 'add', 'taskdeck', '--scope', 'user', '--', COMMAND.command, ...COMMAND.args]);
-    out.push(r.status === 0 ? '✓ Claude Code: added' : `✗ Claude Code: ${(r.stderr || r.stdout).trim()}`);
-  }
-  for (const c of JSON_CLIENTS) {
-    const dir = c.dir();
-    const file = join(dir, c.file);
-    if (!existsSync(dir)) { out.push(`· ${c.name}: not found`); continue; }
-    try {
-      const cfg = readJson(file);
-      if (cfg[c.key]?.taskdeck) { out.push(`✓ ${c.name}: already set up`); continue; }
-      if (!dryRun) writeJson(file, { ...cfg, [c.key]: { ...cfg[c.key], taskdeck: c.entry } });
-      out.push(`${dryRun ? '→' : '✓'} ${c.name}: ${dryRun ? 'would add to' : 'added to'} ${file}`);
-    } catch (e) {
-      out.push(`✗ ${c.name}: couldn't read ${file} (${e.message}). Add "taskdeck": ${JSON.stringify(c.entry)} under "${c.key}" yourself.`);
-    }
-  }
-  return out;
+// Clients that keep MCP servers in a JSON file under a folder that exists once they're installed.
+function jsonClient(id, name, dir, file, key, entry, aliases = []) {
+  const path = () => join(dir(), file);
+  return {
+    id, name, aliases,
+    found: () => existsSync(dir()),
+    has: () => !!readJson(path())[key]?.taskdeck,
+    add() {
+      const cfg = readJson(path());
+      writeJson(path(), { ...cfg, [key]: { ...cfg[key], taskdeck: entry } });
+      return `added to ${path()}`;
+    },
+    remove() {
+      const cfg = readJson(path());
+      delete cfg[key].taskdeck;
+      writeJson(path(), cfg);
+      return `removed from ${path()}`;
+    },
+    manual: `add "taskdeck": ${JSON.stringify(entry)} under "${key}" in ${path()}`,
+  };
 }
 
-export async function uninstall({ dryRun, force, purge } = {}) {
-  const out = [];
-  if (claudeHas()) {
-    if (dryRun) out.push('→ Claude Code: would run claude mcp remove taskdeck --scope user');
-    else {
-      const r = claude(['mcp', 'remove', 'taskdeck', '--scope', 'user']);
-      out.push(r.status === 0 ? '✓ Claude Code: removed' : `✗ Claude Code: ${(r.stderr || r.stdout).trim()}`);
-    }
-  }
-  for (const c of JSON_CLIENTS) {
-    const file = join(c.dir(), c.file);
-    try {
-      const cfg = readJson(file);
-      if (!cfg[c.key]?.taskdeck) continue;
-      if (!dryRun) {
-        delete cfg[c.key].taskdeck;
-        writeJson(file, cfg);
+export const CLIENTS = [
+  {
+    id: 'claude', name: 'Claude Code', aliases: [],
+    found: () => claude(['--version']).status === 0,
+    has() {
+      try {
+        return !!JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8')).mcpServers?.taskdeck;
+      } catch {
+        return false;
       }
-      out.push(`${dryRun ? '→' : '✓'} ${c.name}: ${dryRun ? 'would remove from' : 'removed from'} ${file}`);
-    } catch (e) {
-      out.push(`✗ ${c.name}: couldn't read ${file} (${e.message}). Remove "taskdeck" from it yourself.`);
-    }
+    },
+    add: () => claudeResult(claude(['mcp', 'add', 'taskdeck', '--scope', 'user', '--', COMMAND.command, ...COMMAND.args]), 'added'),
+    remove: () => claudeResult(claude(['mcp', 'remove', 'taskdeck', '--scope', 'user']), 'removed'),
+  },
+  jsonClient('vscode', 'VS Code (Copilot)', vscodeUserDir, 'mcp.json', 'servers', { type: 'stdio', ...COMMAND }, ['copilot']),
+  jsonClient('cursor', 'Cursor', () => join(homedir(), '.cursor'), 'mcp.json', 'mcpServers', COMMAND),
+  jsonClient('windsurf', 'Windsurf', () => join(homedir(), '.codeium', 'windsurf'), 'mcp_config.json', 'mcpServers', COMMAND),
+];
+
+// Client ids named by flags (--claude, --copilot...), or null when none were given.
+export function pickedClients(flags) {
+  const picked = CLIENTS.filter((c) => flags.all || flags[c.id] || c.aliases.some((a) => flags[a]));
+  return picked.length ? picked : null;
+}
+
+function safely(c, fn) {
+  try {
+    return fn();
+  } catch (e) {
+    return `couldn't edit its config (${e.message}); ${c.manual ?? 'edit it by hand'}`;
   }
-  if (dryRun) {
-    out.push('→ would stop the daemon');
-    if (purge) out.push(`→ would delete ${HOME}`);
-    return out;
+}
+
+export function init(clients, { dryRun } = {}) {
+  return clients.map((c) => {
+    if (!c.found()) return `· ${c.name}: not installed`;
+    if (safely(c, c.has) === true) return `✓ ${c.name}: already set up`;
+    if (dryRun) return `→ ${c.name}: would add taskdeck`;
+    const r = safely(c, c.add);
+    return `${/^(added|removed)/.test(r) ? '✓' : '✗'} ${c.name}: ${r}`;
+  });
+}
+
+// Removes taskdeck wherever it's configured (or only from `clients`), then stops the daemon.
+export async function uninstall(clients, { dryRun, force, purge } = {}) {
+  const out = [];
+  for (const c of clients ?? CLIENTS) {
+    if (safely(c, c.has) !== true) continue;
+    if (dryRun) { out.push(`→ ${c.name}: would remove taskdeck`); continue; }
+    const r = safely(c, c.remove);
+    out.push(`${/^removed/.test(r) ? '✓' : '✗'} ${c.name}: ${r}`);
   }
+  // Removing it from one client leaves the others using the daemon.
+  if (clients) return out.length ? out : ['· taskdeck isn\'t set up in those clients'];
+  if (dryRun) return [...out, '→ would stop the daemon', ...(purge ? [`→ would delete ${HOME}`] : [])];
   const stopped = await stopDaemon(force);
-  if (stopped?.status === 409) {
-    out.push(`✗ daemon: ${stopped.data.running.length} run(s) still going. Stop them, or pass --force to stop them too.`);
-    return out;
-  }
+  if (stopped?.status === 409) return [...out, `✗ daemon: ${stopped.data.running.length} run(s) still going. Stop them, or pass --force to stop them too.`];
   out.push(stopped ? '✓ daemon: stopped' : '· daemon: not running');
   if (purge && existsSync(HOME)) {
     rmSync(HOME, { recursive: true, force: true });
     out.push(`✓ deleted ${HOME} (repo list, run history, proposals)`);
   } else if (existsSync(HOME)) out.push(`· kept ${HOME}; --purge deletes it`);
-  out.push("· taskdeck.yaml files in your repos are untouched. If you installed taskdeck globally, also run: npm rm -g taskdeck");
+  out.push('· taskdeck.yaml files in your repos are untouched. If you installed taskdeck globally, also run: npm rm -g taskdeck');
   return out;
 }

@@ -11,8 +11,10 @@ import { openUi } from './open.mjs';
 
 const USAGE = `taskdeck — a task runner for you and your coding agent
 
-  taskdeck init                       add taskdeck's MCP server to Claude Code, Cursor, VS Code, Windsurf
-  taskdeck uninstall                  remove it again and stop the daemon (--purge also deletes ~/.taskdeck)
+  taskdeck init [--claude ...]        add taskdeck's MCP server to your agent: --claude, --copilot (VS Code),
+                                      --cursor, --windsurf or --all; asks which when none is given
+  taskdeck uninstall                  remove it everywhere and stop the daemon (--purge also deletes
+                                      ~/.taskdeck); with client flags, only from those clients
 
   taskdeck list                      actions in this repo's taskdeck.yaml
   taskdeck show <action>              docs, params and the exact command
@@ -47,18 +49,30 @@ function help() {
 }
 
 async function init() {
-  const lines = (await import('./install.mjs')).init({ dryRun: flags['dry-run'] });
+  const { CLIENTS, pickedClients, init } = await import('./install.mjs');
+  let clients = pickedClients(flags);
+  const flagList = CLIENTS.map((c) => [c.id, ...c.aliases].map((x) => `--${x}`).join('/')).join(', ');
+  if (!clients) {
+    const found = CLIENTS.filter((c) => c.found());
+    if (!found.length) return console.log('No supported client found. Add this MCP server to yours: npx -y taskdeck@latest mcp');
+    if (!process.stdin.isTTY) throw new Error(`Which clients? Pass ${flagList} or --all. Found: ${found.map((c) => c.name).join(', ')}`);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    clients = [];
+    for (const c of found) if (/^y/i.test(await rl.question(`Add taskdeck to ${c.name}? [y/N] `))) clients.push(c);
+    rl.close();
+    if (!clients.length) return console.log(`Nothing changed. Next time you can pass ${flagList} or --all.`);
+  }
+  const lines = init(clients, { dryRun: flags['dry-run'] });
   console.log(lines.join('\n'));
   if (lines.some((l) => l.startsWith('✓') || l.startsWith('→'))) {
     console.log('\nOpen a new chat in a repo (already-open chats don\'t load new MCP servers) and say: set up taskdeck');
-  } else {
-    console.log('\nNo supported client found. Add this MCP server to yours: npx -y taskdeck@latest mcp');
   }
   if (lines.some((l) => l.startsWith('✗'))) process.exitCode = 1;
 }
 
 async function uninstall() {
-  const lines = await (await import('./install.mjs')).uninstall({ dryRun: flags['dry-run'], force: flags.force, purge: flags.purge });
+  const { pickedClients, uninstall } = await import('./install.mjs');
+  const lines = await uninstall(flags.all ? null : pickedClients(flags), { dryRun: flags['dry-run'], force: flags.force, purge: flags.purge });
   console.log(lines.join('\n'));
   if (lines.some((l) => l.startsWith('✗'))) process.exitCode = 1;
 }
