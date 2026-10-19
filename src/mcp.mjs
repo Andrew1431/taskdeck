@@ -61,8 +61,8 @@ const TOOLS = [
   },
   {
     name: 'taskdeck_run_status',
-    description: 'Status and output tail of a run.',
-    inputSchema: { type: 'object', required: ['run_id'], properties: { run_id: { type: 'string' }, tail_chars: { type: 'number', default: 4000 } } },
+    description: 'Status and output tail of a run. Pass wait_seconds to wait for a running run to finish instead of polling.',
+    inputSchema: { type: 'object', required: ['run_id'], properties: { run_id: { type: 'string' }, wait_seconds: { type: 'number', default: 0 }, tail_chars: { type: 'number', default: 4000 } } },
   },
   {
     name: 'taskdeck_recent_runs',
@@ -172,14 +172,9 @@ async function callTool(name, args) {
       if (r.status === 403) return `${r.data.error} Use taskdeck_propose instead.\nCommand: ${r.data.command}`;
       const run = must(r);
       if (run.terminal) return `Opened in a terminal window for the user (interactive): ${run.command}`;
-      const deadline = Date.now() + (args.wait_seconds ?? 60) * 1000;
-      let cur = run;
-      while (cur.status === 'running' && Date.now() < deadline) {
-        await new Promise((res) => setTimeout(res, 500));
-        cur = must(await api('GET', `/api/runs/${run.id}?tail=4000&plain`));
-      }
-      if (cur.status === 'running') return `Still running after ${args.wait_seconds ?? 60}s. run_id: ${run.id} (check with taskdeck_run_status). The user can watch it in the taskdeck UI.`;
-      return formatRun(must(await api('GET', `/api/runs/${run.id}?tail=4000&plain`)));
+      const cur = await waitForRun(run.id, args.wait_seconds ?? 60, 4000);
+      if (cur.status === 'running') return `Still running after ${args.wait_seconds ?? 60}s. run_id: ${run.id} (wait more with taskdeck_run_status and wait_seconds). The user can watch it in the taskdeck UI.`;
+      return formatRun(cur);
     }
     case 'taskdeck_propose': {
       const repo = await resolveRepo(args.repo);
@@ -188,16 +183,16 @@ async function callTool(name, args) {
       return `Queued for the user (proposal ${p.id}): ${p.title}\nCommand: ${p.command}\n${where} Tell the user; don't ask them to copy the command.`;
     }
     case 'taskdeck_run_status':
-      return formatRun(must(await api('GET', `/api/runs/${encodeURIComponent(args.run_id)}?tail=${args.tail_chars ?? 4000}&plain`)));
+      return formatRun(await waitForRun(args.run_id, args.wait_seconds ?? 0, args.tail_chars ?? 4000));
     case 'taskdeck_recent_runs': {
       const repo = await resolveRepo(args.repo);
       const runs = must(await api('GET', `/api/runs?repo=${repo.id}&limit=${args.limit ?? 15}`));
       if (!runs.length) return 'No runs yet.';
-      return runs.map((r) => `${new Date(r.startedAt).toISOString()}  ${r.actionId.padEnd(16)} ${r.status}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''} by ${r.by}  run_id ${r.id}`).join('\n');
+      return runs.map((r) => `${new Date(r.startedAt).toISOString()}  ${r.actionId.padEnd(16)} ${r.status}${r.status === 'running' ? ` for ${elapsed(r)}` : ''}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''} by ${r.by}  run_id ${r.id}`).join('\n');
     }
     case 'taskdeck_add': {
       const r = must(await api('POST', '/api/repos', { path: resolve(args.path), contract: args.contract ? resolve(args.contract) : undefined }));
-      return `Added ${r.name} (repo id ${r.id}, ${r.actionCount} actions)${r.errors.length ? `. Contract problems: ${r.errors.join('; ')}` : ''}`;
+      return `${r.added ? 'Added' : 'Already added:'} ${r.name} (repo id ${r.id}, ${r.actionCount} actions)${r.errors.length ? `. Contract problems: ${r.errors.join('; ')}` : ''}`;
     }
     case 'taskdeck_remove': {
       const repos = must(await api('GET', '/api/repos'));
@@ -213,9 +208,25 @@ async function callTool(name, args) {
   }
 }
 
+async function waitForRun(id, seconds, tail) {
+  const get = async () => must(await api('GET', `/api/runs/${encodeURIComponent(id)}?tail=${tail}&plain`));
+  const deadline = Date.now() + seconds * 1000;
+  let cur = await get();
+  while (cur.status === 'running' && Date.now() < deadline) {
+    await new Promise((res) => setTimeout(res, 500));
+    cur = await get();
+  }
+  return cur;
+}
+
+function elapsed(r) {
+  const s = Math.round(((r.endedAt ?? Date.now()) - r.startedAt) / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+}
+
 function formatRun(r) {
   const secs = r.endedAt ? ((r.endedAt - r.startedAt) / 1000).toFixed(1) : null;
-  return `${r.title}: ${r.status}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''}${secs ? ` after ${secs}s` : ''}\n$ ${r.command}\n\n${r.log || '(no output)'}`;
+  return `${r.title}: ${r.status}${r.exitCode != null ? ` (exit ${r.exitCode})` : ''}${secs ? ` after ${secs}s` : r.status === 'running' ? ` for ${elapsed(r)}` : ''}\n$ ${r.command}\n\n${r.log || '(no output)'}`;
 }
 
 function must(r) {

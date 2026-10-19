@@ -32,9 +32,16 @@ const USAGE = `taskdeck — a task runner for you and your coding agent
 
   --repo <dir>        repo root (default: cwd)
   --contract <file>   contract path (default: <repo>/taskdeck.yaml)
-  --json              machine-readable output`;
+  --json              machine-readable output
+  --version           print the version
+
+  Tools that call taskdeck often: npm i -g taskdeck skips npx's ~seconds of startup per call.`;
 
 const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
+if (flags.version || cmd === 'version') {
+  console.log((await import('./version.mjs')).VERSION);
+  process.exit(0);
+}
 
 try {
   await ({ init, uninstall, list, show, run, check, discover, ui, add, remove, status, stop, mcp, daemon }[cmd] ?? help)();
@@ -127,7 +134,7 @@ function show() {
     console.log('\nparams:');
     for (const p of a.params) {
       const how = p.flag ? p.flag : p.option ? `${p.option} <value>` : p.position !== undefined ? `<arg ${p.position}>` : `$${p.env}`;
-      const bits = [p.type === 'enum' ? (p.choices ?? []).join('|') : p.type, p.required && 'required', p.default !== undefined && `default ${JSON.stringify(p.default)}`].filter(Boolean);
+      const bits = [p.type === 'enum' ? (p.choices ?? []).join('|') : p.type, p.required && 'required', p.default !== undefined && `if omitted, the command uses ${JSON.stringify(p.default)}`].filter(Boolean);
       console.log(`  ${p.name.padEnd(18)} ${how.padEnd(22)} ${bits.join(', ')}`);
       if (p.description) console.log(`  ${''.padEnd(18)} ${p.description}`);
     }
@@ -224,7 +231,8 @@ async function add() {
   const dir = positional[0] ?? flags.repo ?? '.';
   const r = await api('POST', '/api/repos', { path: resolve(dir), contract: flags.contract ? resolve(flags.contract) : undefined });
   if (!r.ok) throw new Error(r.data.error);
-  console.log(`Added ${r.data.name} (${r.data.actionCount} actions)${r.data.errors.length ? ` with ${r.data.errors.length} contract problem(s)` : ''}`);
+  if (flags.json) return console.log(JSON.stringify(r.data, null, 2));
+  console.log(`${r.data.added ? 'Added' : 'Already added:'} ${r.data.name} (id ${r.data.id}, ${r.data.actionCount} actions) (${r.data.actionCount} actions)${r.data.errors.length ? ` with ${r.data.errors.length} contract problem(s)` : ''}`);
 }
 
 async function remove() {

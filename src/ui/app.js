@@ -368,7 +368,7 @@ function renderAction(sel) {
 function field(a, p, values, onChange) {
   const id = `f-${p.name}`;
   const label = h('label', { for: id }, p.name, p.required && h('span', { class: 'req', title: 'required' }, ' *'));
-  const helpText = [p.description, p.default !== undefined && p.default !== null && `Default: ${p.default}`].filter(Boolean).join(' · ');
+  const helpText = [p.description, p.default !== undefined && p.default !== null && `If omitted, the command uses ${p.default}`].filter(Boolean).join(' · ');
   const help = helpText && h('div', { class: 'help' }, helpText);
   const set = (v) => { values[p.name] = v; onChange(); };
 

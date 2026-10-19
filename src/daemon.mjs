@@ -80,7 +80,10 @@ async function handle(req, res, token, port) {
 
   // ---- repos ----
   if (path === '/api/repos' && req.method === 'GET') return send(res, 200, repos().map(summary));
-  if (path === '/api/repos' && req.method === 'POST') return send(res, 200, summary(addRepo(body.path, body.contract)));
+  if (path === '/api/repos' && req.method === 'POST') {
+    const r = addRepo(body.path, body.contract);
+    return send(res, 200, { ...summary(r), added: !r.existed });
+  }
   if ((p = m(/^\/api\/repos\/([\w-]+)$/))) {
     const r = repoOr404(p[1], res);
     if (!r) return;
@@ -165,7 +168,7 @@ export function addRepo(path, contract) {
   if (existing) {
     if (contract) existing.contract = resolve(contract);
     writeState('repos', all);
-    return existing;
+    return { ...existing, existed: true };
   }
   let id = basename(root).toLowerCase().replace(/[^\w-]+/g, '-');
   while (all.some((r) => r.id === id)) id += '-2';
