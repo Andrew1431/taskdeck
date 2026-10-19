@@ -10,14 +10,19 @@ const KINDS = ['task', 'service', 'detached', 'interactive'];
 const RISKS = ['low', 'medium', 'high'];
 const AGENT = ['run', 'propose', 'never'];
 const ACTION_KEYS = ['title', 'description', 'group', 'run', 'cwd', 'kind', 'risk', 'confirm', 'agent', 'env', 'secrets', 'requires', 'params'];
+const LINK_KEYS = ['title', 'url', 'group', 'description'];
+const GROUP_KEYS = ['description', 'health'];
 const PARAM_KEYS = ['type', 'description', 'default', 'required', 'choices', 'choicesFrom', 'flag', 'option', 'position', 'env', 'secret'];
 
 export function load(repo, contractPath) {
   const root = resolve(repo);
   const file = contractPath ? resolve(contractPath) : join(root, FILE);
   if (!existsSync(file)) throw new Error(`No contract at ${file}. Point your agent at AGENT_SETUP.md to write one.`);
-  const doc = parse(readFileSync(file, 'utf8')) ?? {};
-  const errors = validate(doc);
+  const raw = parse(readFileSync(file, 'utf8')) ?? {};
+  const errors = [];
+  const doc = { ...raw };
+  for (const k of ['actions', 'links', 'groups']) doc[k] = expandEach(raw[k], k, errors);
+  errors.push(...validate(doc));
   return { root, file, doc: normalize(doc), errors };
 }
 
@@ -41,7 +46,53 @@ function normalize(doc) {
       params: Object.entries(a.params ?? {}).map(([name, p]) => ({ name, type: p.type ?? (p.flag ? 'bool' : 'string'), ...p })),
     };
   });
-  return { ...doc, actions, configs: doc.configs ?? {}, workflows: doc.workflows ?? {} };
+  const links = Object.entries(doc.links ?? {}).map(([id, l]) => ({ id, title: l.title ?? id, url: l.url, group: l.group ?? null, description: l.description?.trim() ?? null }));
+  const groups = Object.fromEntries(Object.entries(doc.groups ?? {}).map(([name, g]) => [name, { description: g.description?.trim() ?? null, health: normalizeHealth(g.health) }]));
+  return { ...doc, actions, links, groups, configs: doc.configs ?? {}, workflows: doc.workflows ?? {} };
+}
+
+// health: a URL, { url }, or { run, cwd? }; a URL is up when it answers below 500, a command when it exits 0.
+function normalizeHealth(h) {
+  if (!h) return null;
+  if (typeof h === 'string') return { url: h };
+  return h.url ? { url: h.url } : { run: h.run, cwd: h.cwd ?? '.' };
+}
+
+// `each: { service: [web, api] }` on an action, link or group repeats it once per value (the
+// cross product for several keys), with {service} replaced in its id and every string inside it.
+function expandEach(section, at, errors) {
+  if (!section || typeof section !== 'object') return section;
+  const out = {};
+  for (const [id, item] of Object.entries(section)) {
+    if (!item?.each) {
+      out[id] = item;
+      continue;
+    }
+    const { each, ...rest } = item;
+    const keys = typeof each === 'object' && !Array.isArray(each) ? Object.keys(each) : [];
+    const bad = !keys.length || keys.some((k) => !Array.isArray(each[k]) || each[k].some((v) => typeof v !== 'string' && typeof v !== 'number'));
+    if (bad) {
+      errors.push(`${at}.${id}.each: must be a map of name: [values], e.g. { service: [web, api] }`);
+      continue;
+    }
+    const missing = keys.filter((k) => !id.includes(`{${k}}`));
+    if (missing.length) {
+      errors.push(`${at}.${id}: id must include ${missing.map((k) => `{${k}}`).join(' and ')} so each copy gets its own id`);
+      continue;
+    }
+    let combos = [{}];
+    for (const k of keys) combos = combos.flatMap((c) => each[k].map((v) => ({ ...c, [k]: String(v) })));
+    for (const vars of combos) {
+      const sub = (v) => typeof v === 'string' ? v.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m)
+        : Array.isArray(v) ? v.map(sub)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [sub(k), sub(x)]))
+        : v;
+      const newId = sub(id);
+      if (newId in out || newId in section) errors.push(`${at}.${id}: expands to '${newId}', which already exists`);
+      out[newId] = sub(rest);
+    }
+  }
+  return out;
 }
 
 export function validate(doc) {
@@ -86,6 +137,19 @@ export function validate(doc) {
   for (const [id, c] of Object.entries(doc.configs ?? {})) {
     if (!c.file) err(`configs.${id}`, 'missing `file`');
   }
+  for (const [id, l] of Object.entries(doc.links ?? {})) {
+    for (const k of Object.keys(l ?? {})) if (!LINK_KEYS.includes(k)) err(`links.${id}`, `unknown key '${k}'`);
+    if (!/^https?:\/\//.test(l?.url ?? '')) err(`links.${id}.url`, 'must be an http:// or https:// URL');
+  }
+  for (const [name, g] of Object.entries(doc.groups ?? {})) {
+    for (const k of Object.keys(g ?? {})) if (!GROUP_KEYS.includes(k)) err(`groups.${name}`, `unknown key '${k}'`);
+    const hl = g?.health;
+    if (hl !== undefined) {
+      const url = typeof hl === 'string' ? hl : hl?.url;
+      if (url !== undefined ? !/^https?:\/\//.test(url) : !isArgv(hl?.run)) err(`groups.${name}.health`, 'a URL, { url }, or { run: command, cwd? }');
+    }
+  }
+  if (doc.generatedBy !== undefined && typeof doc.generatedBy?.tool !== 'string') err('generatedBy', 'needs `tool` (and optionally `regenerate`: the command that rewrites this file)');
   return errors;
 }
 

@@ -9,7 +9,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { load, buildInvocation, baseArgv, expandPath, FILE } from './contract.mjs';
+import { load, buildInvocation, baseArgv, expandPath, splitArgs, FILE } from './contract.mjs';
 import { DAEMON_FILE, ensureHome, readState, writeState } from './home.mjs';
 import { openUi } from './open.mjs';
 import { VERSION } from './version.mjs';
@@ -110,6 +110,11 @@ async function handle(req, res, token, port) {
     if (!r) return;
     return send(res, 200, await choices(r, p[2], p[3]));
   }
+  if ((p = m(/^\/api\/repos\/([\w-]+)\/health$/))) {
+    const r = repoOr404(p[1], res);
+    if (!r) return;
+    return send(res, 200, await health(r));
+  }
   if ((p = m(/^\/api\/repos\/([\w-]+)\/open$/)) && req.method === 'POST') {
     const r = repoOr404(p[1], res);
     if (!r) return;
@@ -198,7 +203,7 @@ function summary(r) {
 
 function detail(r) {
   const c = loadRepo(r);
-  if (!c.doc) return { ...summary(r), actions: [], workflows: {}, configs: {} };
+  if (!c.doc) return { ...summary(r), actions: [], workflows: {}, configs: {}, links: [], groups: {}, generatedBy: null };
   const actions = c.doc.actions.map((a) => {
     let command = null;
     try { command = commandLine(baseArgv(a)); } catch {}
@@ -208,7 +213,40 @@ function detail(r) {
     const abs = resolve(c.root, expandPath(f.file));
     return [id, { ...f, exists: existsSync(abs), exampleExists: f.example ? existsSync(resolve(c.root, f.example)) : null }];
   }));
-  return { ...summary(r), description: c.doc.description ?? null, actions, workflows: c.doc.workflows, configs };
+  return { ...summary(r), description: c.doc.description ?? null, actions, workflows: c.doc.workflows, configs, links: c.doc.links, groups: c.doc.groups, generatedBy: c.doc.generatedBy ?? null };
+}
+
+// ---------- group health ----------
+// Probed on request and cached briefly, so several open UIs and agents don't multiply the checks.
+const healthCache = new Map();
+
+function health(r) {
+  const hit = healthCache.get(r.id);
+  if (hit && Date.now() - hit.at < 3000) return hit.result;
+  const c = loadRepo(r);
+  const probes = Object.entries(c.doc?.groups ?? {}).filter(([, g]) => g.health);
+  const result = Promise.all(probes.map(async ([name, g]) => [name, { ...(await probe(c.root, g.health)), checkedAt: Date.now() }])).then(Object.fromEntries);
+  healthCache.set(r.id, { at: Date.now(), result });
+  return result;
+}
+
+async function probe(root, h) {
+  if (h.url) {
+    try {
+      const res = await fetch(h.url, { signal: AbortSignal.timeout(3000) });
+      return { up: res.status < 500, detail: `${h.url} answered ${res.status}` };
+    } catch (e) {
+      return { up: false, detail: `${h.url}: ${e.name === 'TimeoutError' ? 'no answer in 3s' : e.cause?.code ?? e.message}` };
+    }
+  }
+  const argv = typeof h.run === 'string' ? splitArgs(h.run) : h.run;
+  return new Promise((res) => {
+    execFile(process.platform === 'win32' ? 'cmd.exe' : argv[0], process.platform === 'win32' ? ['/d', '/s', '/c', `"${cmdExeLine(argv)}"`] : argv.slice(1),
+      { cwd: resolve(root, h.cwd), timeout: 10_000, windowsHide: true, windowsVerbatimArguments: true }, (err, out, errOut) => {
+        const line = `${out}\n${errOut}`.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+        res({ up: !err, detail: line ?? (err ? (err.killed ? 'timed out after 10s' : `exited ${err.code}`) : 'exited 0') });
+      });
+  });
 }
 
 // ---------- running ----------

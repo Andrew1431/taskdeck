@@ -46,6 +46,13 @@ Follow [CONTRACT.md](CONTRACT.md). The rules that matter most:
 - **Config files** the user edits go under `configs:` with their example file and which
   keys are secret. Machine-specific ones get `local: true`.
 - **Workflows** capture the chores: ordered `edit:`, `manual:` and `action:` steps.
+- **The same buttons for several things** (start/stop for each service): write each action
+  once with `each: { service: [web, api] }` and `{service}` in its id, rather than copying it.
+- **Dev servers** get a `links:` entry for their URL, and their group gets a `health:` check
+  (the URL, or a status command that exits 0 when it's up), so the UI shows whether they're
+  running even when another tool owns the process.
+- **A generated contract** (a tool writes taskdeck.yaml) says so with
+  `generatedBy: { tool, regenerate }`, so nobody edits it by hand.
 - Quote YAML strings that contain `, : # { }` inside `{ flow: maps }`.
 
 ## 3. Check it

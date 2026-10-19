@@ -46,6 +46,32 @@ actions:
         position: 0                     # positional, after the base argv
         env: TARGET                     # set as an environment variable
 
+  up-{service}:                         # `each` repeats an action once per value
+    title: Start {service}
+    group: "{service}"
+    run: mycli up {service}
+    each: { service: [web, api, worker] }   # several keys: one copy per combination
+
+links:              # open-in-browser buttons
+  <id>:
+    title: Open web
+    url: http://localhost:3000/
+    group: web                          # shown in that group's header; omit for the top of the page
+    description: ...
+
+groups:             # optional, keyed by the `group` name actions use
+  web:
+    description: The Next.js app.
+    health: http://localhost:3000/      # up when it answers with a status below 500
+    # health: { run: mycli status web, cwd: . }   # up when it exits 0
+  "{service}":                          # `each` works here and on links too
+    health: { run: "mycli status {service}" }
+    each: { service: [api, worker] }
+
+generatedBy:        # the contract is written by a tool; hand edits get overwritten
+  tool: mycli
+  regenerate: mycli render
+
 workflows:
   <id>:
     title: Release a version
@@ -59,3 +85,11 @@ workflows:
 
 Argv is built as: `run` + positional params in order + flags/options in declaration order.
 Params you don't set are omitted, so the command's own defaults stay the source of truth.
+
+`each` replaces `{name}` in the id and in every string inside the entry. The id must use
+every key, so each copy gets its own id. In YAML, quote strings that start with `{` or contain
+`{name}` inside a `{ flow: map }`, e.g. `title: "Open {service}"`.
+
+Health checks run when the UI or an agent asks (the UI asks every 5 seconds), with a 3s
+timeout for URLs and 10s for commands. They show as a dot by the group's name, and in the
+MCP `taskdeck_list` output.
