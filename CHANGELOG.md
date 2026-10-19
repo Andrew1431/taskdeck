@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-19)
 
 ### Contract (see CONTRACT.md)
 - **`each:` templates.** Write an action once and repeat it over a list:
